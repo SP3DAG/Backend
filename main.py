@@ -1,1 +1,4 @@
-# For FastAPI Setup
+from fastapi import FastAPI
+
+app = FastAPI()
+
