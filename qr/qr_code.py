@@ -42,7 +42,7 @@ class MultiQRLSBStego:
         img = qr.make_image(fill_color="black", back_color="white").convert("L")
         arr = np.array(img)
         binarized = (arr < 128).astype(np.uint8)
-        Image.fromarray(arr).save("debug_qr_original.png")
+        Image.fromarray(arr).save("qr/output/debug_qr_original.png")
         return binarized
     
 
@@ -141,7 +141,7 @@ class MultiQRLSBStego:
             extracted = self.extract_from_position(image_path, top, left, qr_shape)
             decoded = self.decode_qr_image(extracted)
             results.append((idx, decoded))
-            extracted.save(f"extracted_qrs/qr_extracted_{idx}.png")
+            extracted.save(f"qr/extracted_qrs/qr_extracted_{idx}.png")
             self._log(f"QR #{idx} decoded: {decoded}")
         return results
     def plot_qr_positions(self, image_path, positions, qr_shape):
@@ -168,8 +168,8 @@ class MultiQRLSBStego:
 
 
 if __name__ == "__main__":
-    message = "Stego QR in LSBs (xN)"
-    cover_image = "test.jpeg"  # Replace with your image
+    message = "This is a test"
+    cover_image = "qr/test.jpeg"  # Replace with your image
 
     qr = MultiQRLSBStego(block_size=8, debug=True)
     qr_matrix = qr.generate_qr_matrix(message, version=2)
@@ -177,7 +177,7 @@ if __name__ == "__main__":
     stego_path, positions, shape = qr.embed_multiple(
         cover_image_path=cover_image,
         qr_matrix=qr_matrix,
-        output_path="qr_lsb_multi_stego.png"
+        output_path="qr/output/test_with_qr.png"
     )
 
     results = qr.test_all_qrs(stego_path, positions, shape)
