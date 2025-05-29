@@ -15,3 +15,11 @@ python -m venv venv
 ```sh
 pip install -r requirements.txt
 ```
+
+# How to run
+
+To test the QR code hiding. Simply run:
+
+```sh
+python qr/qr_code.py
+```
