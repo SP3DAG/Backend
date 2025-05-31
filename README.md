@@ -18,6 +18,13 @@ pip install -r requirements.txt
 
 # How to run
 
+## To serve the backend
+The FastAPI backend serves for decoding and verification of the QR code embedded image from the camera app.
+
+```sh
+uvicorn main:app --reload    
+```
+
 ## Test QR code hiding
 
 ```sh
