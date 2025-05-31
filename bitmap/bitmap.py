@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # Load and convert image to grayscale
-image = Image.open("qr_lsb_multi_stego.png").convert("L")  # Replace with your image path
+image = Image.open("qr/output/test_with_qr.png").convert("L")  # Replace with your image path
 image_array = np.array(image)
 
 # Plot all 8 bit planes

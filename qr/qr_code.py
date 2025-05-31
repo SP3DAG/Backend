@@ -46,7 +46,7 @@ class MultiQRLSBStego:
         return binarized
     
 
-    def embed_multiple(self, cover_image_path, qr_matrix, output_path="qr_lsb_multi_stego.png"):
+    def embed_multiple(self, cover_image_path, qr_matrix, output_path="qr/output/qr_lsb_multi_stego.png"):
         """
         Opens a cover image, tiles qr_matrix across it by embedding each bit into the least significant bit of every pixel in block_size x block_size blocks,
         saves the stego image, and returns the output filename, a list of top-left positions for each embedded QR, and the QR's (height, width).
