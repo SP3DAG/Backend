@@ -18,8 +18,26 @@ pip install -r requirements.txt
 
 # How to run
 
-To test the QR code hiding. Simply run:
+## Test QR code hiding
 
 ```sh
 python qr/qr_code.py
+```
+
+## Test QR code high for channel *blue*
+
+```sh
+python qr/qr_code_blue.py
+```
+
+## Decode the image
+
+```sh
+python decoding/decoding.py
+```
+
+## Plot bitmap for channel blue
+
+```sh
+python bitmap/bitmap_blue.py
 ```
