@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>QR Stego Verifier</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 40px;
+    }
+    #result {
+      margin-top: 20px;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <h1>Verify Stego QR Code</h1>
+  <form id="uploadForm">
+    <input type="file" id="imageInput" accept="image/*" required />
+    <button type="submit">Verify</button>
+  </form>
+  <div id="result"></div>
+
+  <script>
+    const form = document.getElementById("uploadForm");
+    const imageInput = document.getElementById("imageInput");
+    const resultDiv = document.getElementById("result");
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const file = imageInput.files[0];
+      if (!file) return;
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      resultDiv.textContent = "Verifying...";
+
+      try {
+        const response = await fetch("http://127.0.0.1:8000/verify-image/", {
+          method: "POST",
+          body: formData
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+          resultDiv.textContent = "Decoded Message: " + data.decoded_message;
+        } else {
+          resultDiv.textContent = "Error: " + (data.detail || "Unknown error");
+        }
+      } catch (err) {
+        resultDiv.textContent = "Failed to connect to backend.";
+      }
+    });
+  </script>
+</body>
+</html>
