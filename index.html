@@ -2,11 +2,22 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>QR Stego Verifier</title>
+  <title>GeoCam Tester</title>
   <style>
     body {
       font-family: sans-serif;
       margin: 40px;
+      line-height: 1.6;
+    }
+    h1 {
+      margin-bottom: 5px;
+    }
+    section {
+      margin-top: 30px;
+    }
+    input, button {
+      margin-top: 10px;
+      font-size: 1em;
     }
     #result {
       margin-top: 20px;
@@ -15,36 +26,56 @@
   </style>
 </head>
 <body>
-  <h1>Verify Stego QR Code</h1>
-  <form id="uploadForm">
-    <input type="file" id="imageInput" accept="image/*" required />
-    <button type="submit">Verify</button>
-  </form>
-  <div id="result"></div>
+
+  <h1>🛰️ GeoCam Stego Testing</h1>
+
+  <section>
+    <h2>🔐 Link Device (App → Account)</h2>
+    <form id="linkForm">
+      <label>Enter Code from Website:</label><br>
+      <input type="text" id="linkCode" required />
+      <br><br>
+      <label>Paste Public Key:</label><br>
+      <textarea id="publicKey" rows="6" cols="60" required></textarea><br>
+      <button type="submit">Link Device</button>
+    </form>
+    <div id="linkResult"></div>
+  </section>
+
+  <section>
+    <h2>🧪 Verify QR Stego Image</h2>
+    <form id="uploadForm">
+      <input type="file" id="imageInput" accept="image/*" required />
+      <button type="submit">Verify Image</button>
+    </form>
+    <div id="result"></div>
+  </section>
+
+  <section>
+    <h2>🔗 Sign In</h2>
+    <a href="http://localhost:8000/auth/github">Login with GitHub</a>
+  </section>
 
   <script>
-    const form = document.getElementById("uploadForm");
-    const imageInput = document.getElementById("imageInput");
-    const resultDiv = document.getElementById("result");
-
-    form.addEventListener("submit", async (event) => {
+    // === Verify Stego QR ===
+    document.getElementById("uploadForm").addEventListener("submit", async (event) => {
       event.preventDefault();
-      const file = imageInput.files[0];
-      if (!file) return;
+      const file = document.getElementById("imageInput").files[0];
+      const resultDiv = document.getElementById("result");
 
+      if (!file) return;
       const formData = new FormData();
       formData.append("file", file);
 
       resultDiv.textContent = "Verifying...";
 
       try {
-        const response = await fetch("http://127.0.0.1:8000/verify-image/", {
+        const response = await fetch("http://localhost:8000/verify-image/", {
           method: "POST",
           body: formData
         });
 
         const data = await response.json();
-
         if (response.ok) {
           resultDiv.textContent = "Decoded Message: " + data.decoded_message;
         } else {
@@ -54,6 +85,37 @@
         resultDiv.textContent = "Failed to connect to backend.";
       }
     });
+
+    // === Link Device ===
+    document.getElementById("linkForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const code = document.getElementById("linkCode").value.trim();
+      const publicKey = document.getElementById("publicKey").value.trim();
+      const resultDiv = document.getElementById("linkResult");
+
+      resultDiv.textContent = "Linking...";
+
+      const formData = new FormData();
+      formData.append("code", code);
+      formData.append("public_key", publicKey);
+
+      try {
+        const response = await fetch("http://localhost:8000/api/link-device/", {
+          method: "POST",
+          body: formData
+        });
+
+        const data = await response.json();
+        if (response.ok) {
+          resultDiv.textContent = "Device linked to user ID: " + data.linked_to;
+        } else {
+          resultDiv.textContent = "Error: " + (data.detail || "Unknown error");
+        }
+      } catch (err) {
+        resultDiv.textContent = "Failed to link device.";
+      }
+    });
   </script>
+
 </body>
 </html>

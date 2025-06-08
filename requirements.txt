@@ -7,3 +7,7 @@ qrcode
 fastapi
 uvicorn
 python-multipart
+authlib
+itsdangerous
+httpx
+jinja2
