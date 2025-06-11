@@ -1,12 +1,33 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-import redis, uuid, secrets, json, io, os, qrcode
+import uuid, secrets, json, io, os, qrcode
 from datetime import timedelta
-from decoding.decoding import extract_qr_from_blue_lsb, decode_qr_image
+from decoding.decoding import decode_qr_image
 
-# Redis Setup
-redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+from datetime import datetime, timedelta
+
+# === In-memory token store ===
+tokens = {}
+
+def store_token(token, device_uuid, ttl_seconds=600):
+    tokens[token] = {
+        "uuid": device_uuid,
+        "expires": datetime.utcnow() + timedelta(seconds=ttl_seconds)
+    }
+
+def get_token(token):
+    entry = tokens.get(token)
+    if not entry:
+        return None
+    if datetime.utcnow() > entry["expires"]:
+        del tokens[token]
+        return None
+    return entry["uuid"]
+
+def delete_token(token):
+    tokens.pop(token, None)
+
 
 # FastAPI Setup
 app = FastAPI()
@@ -31,7 +52,7 @@ def home():
 async def generate_qr_link():
     device_uuid = str(uuid.uuid4())
     token = secrets.token_urlsafe(16)
-    redis_client.setex(f"link_token:{token}", timedelta(minutes=10), device_uuid)
+    store_token(token, device_uuid)
 
     qr_payload = {"token": token, "uuid": device_uuid}
     qr_img = qrcode.make(json.dumps(qr_payload))
@@ -43,14 +64,17 @@ async def generate_qr_link():
 
 @app.post("/api/complete-link")
 async def complete_link(token: str = Form(...), public_key: str = Form(...)):
-    device_uuid = redis_client.get(f"link_token:{token}")
+    device_uuid = get_token(token)
     if not device_uuid:
         raise HTTPException(status_code=400, detail="Invalid or expired token")
 
     save_public_key(device_uuid, public_key)
-    redis_client.delete(f"link_token:{token}")
+    delete_token(token)
 
-    return JSONResponse({"success": True, "device_uuid": device_uuid})
+    return JSONResponse({
+        "success": True,
+        "device_uuid": device_uuid
+    })
 
 @app.post("/verify-image/")
 async def verify_image(device_uuid: str = Form(...), file: UploadFile = File(...)):
