@@ -1,121 +1,138 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>GeoCam Tester</title>
+  <meta charset="UTF-8" />
+  <title>GeoCam Link & Verify</title>
   <style>
     body {
       font-family: sans-serif;
-      margin: 40px;
+      background: #f9f9f9;
+      padding: 40px;
       line-height: 1.6;
+      color: #333;
     }
     h1 {
-      margin-bottom: 5px;
+      font-size: 1.8em;
+      margin-bottom: 10px;
     }
     section {
-      margin-top: 30px;
+      background: white;
+      padding: 25px;
+      border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      max-width: 600px;
+      margin-bottom: 40px;
     }
     input, button {
       margin-top: 10px;
       font-size: 1em;
+      padding: 8px;
+      width: 100%;
     }
-    #result {
+    #result, #linkResult {
       margin-top: 20px;
       font-weight: bold;
+      white-space: pre-wrap;
     }
+    .success { color: green; }
+    .error { color: red; }
+    .spinner { display: none; margin-top: 10px; }
   </style>
 </head>
 <body>
 
-  <h1>🛰️ GeoCam Stego Testing</h1>
+<h1>🛰️ GeoCam Device Link & Verification</h1>
 
-  <section>
-    <h2>🔐 Link Device (App → Account)</h2>
-    <form id="linkForm">
-      <label>Enter Code from Website:</label><br>
-      <input type="text" id="linkCode" required />
-      <br><br>
-      <label>Paste Public Key:</label><br>
-      <textarea id="publicKey" rows="6" cols="60" required></textarea><br>
-      <button type="submit">Link Device</button>
-    </form>
-    <div id="linkResult"></div>
-  </section>
+<section>
+  <h2>📲 Pair a New Device via QR</h2>
+  <button onclick="generateQRCode()">🔗 Generate Pairing QR</button>
+  <div id="qrContainer" style="margin-top: 20px;"></div>
+</section>
 
-  <section>
-    <h2>🧪 Verify QR Stego Image</h2>
-    <form id="uploadForm">
-      <input type="file" id="imageInput" accept="image/*" required />
-      <button type="submit">Verify Image</button>
-    </form>
-    <div id="result"></div>
-  </section>
+<section>
+  <h2>🧪 Verify Stego Image</h2>
+  <form id="uploadForm">
+    <label>Select Stego Image:</label><br>
+    <input type="file" id="imageInput" accept="image/*" required /><br><br>
 
-  <section>
-    <h2>🔗 Sign In</h2>
-    <a href="http://localhost:8000/auth/github">Login with GitHub</a>
-  </section>
+    <label>Enter Device UUID:</label><br>
+    <input type="text" id="deviceIdInput" placeholder="e.g., 550e8400-e29b-41d4-a716-446655440000" required /><br><br>
 
-  <script>
-    // === Verify Stego QR ===
-    document.getElementById("uploadForm").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const file = document.getElementById("imageInput").files[0];
-      const resultDiv = document.getElementById("result");
+    <button type="submit">Verify Image</button>
+  </form>
 
-      if (!file) return;
-      const formData = new FormData();
-      formData.append("file", file);
+  <div class="spinner" id="spinner">⏳ Verifying...</div>
+  <div id="result"></div>
+</section>
 
-      resultDiv.textContent = "Verifying...";
+<script>
+  async function generateQRCode() {
+    const container = document.getElementById("qrContainer");
+    container.innerHTML = "Loading QR code...";
 
-      try {
-        const response = await fetch("http://localhost:8000/verify-image/", {
-          method: "POST",
-          body: formData
-        });
-
-        const data = await response.json();
-        if (response.ok) {
-          resultDiv.textContent = "Decoded Message: " + data.decoded_message;
-        } else {
-          resultDiv.textContent = "Error: " + (data.detail || "Unknown error");
-        }
-      } catch (err) {
-        resultDiv.textContent = "Failed to connect to backend.";
+    try {
+      const response = await fetch("http://localhost:8000/generate-qr-link");
+      if (!response.ok) {
+        container.innerHTML = "Failed to generate QR code.";
+        return;
       }
-    });
 
-    // === Link Device ===
-    document.getElementById("linkForm").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const code = document.getElementById("linkCode").value.trim();
-      const publicKey = document.getElementById("publicKey").value.trim();
-      const resultDiv = document.getElementById("linkResult");
+      const blob = await response.blob();
+      const imgURL = URL.createObjectURL(blob);
 
-      resultDiv.textContent = "Linking...";
+      container.innerHTML = `
+        <img src="${imgURL}" alt="QR Code" width="250" />
+        <p>Scan this QR code with the GeoCam app to pair your device.</p>
+      `;
+    } catch (err) {
+      container.innerHTML = "❌ Error connecting to backend.";
+    }
+  }
 
-      const formData = new FormData();
-      formData.append("code", code);
-      formData.append("public_key", publicKey);
+  document.getElementById("uploadForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const file = document.getElementById("imageInput").files[0];
+    const deviceId = document.getElementById("deviceIdInput").value.trim();
+    const resultDiv = document.getElementById("result");
+    const spinner = document.getElementById("spinner");
 
-      try {
-        const response = await fetch("http://localhost:8000/api/link-device/", {
-          method: "POST",
-          body: formData
-        });
+    if (!file || !deviceId) {
+      resultDiv.textContent = "Image and Device UUID are required.";
+      resultDiv.className = "error";
+      return;
+    }
 
-        const data = await response.json();
-        if (response.ok) {
-          resultDiv.textContent = "Device linked to user ID: " + data.linked_to;
-        } else {
-          resultDiv.textContent = "Error: " + (data.detail || "Unknown error");
-        }
-      } catch (err) {
-        resultDiv.textContent = "Failed to link device.";
+    resultDiv.textContent = "";
+    resultDiv.className = "";
+    spinner.style.display = "block";
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("device_uuid", deviceId);
+
+    try {
+      const response = await fetch("http://localhost:8000/verify-image/", {
+        method: "POST",
+        body: formData
+      });
+
+      const data = await response.json();
+      spinner.style.display = "none";
+
+      if (response.ok) {
+        resultDiv.textContent = "✅ Verified Message:\n" + data.decoded_message;
+        resultDiv.className = "success";
+      } else {
+        resultDiv.textContent = "❌ Error: " + (data.detail || "Unknown error");
+        resultDiv.className = "error";
       }
-    });
-  </script>
+    } catch (err) {
+      spinner.style.display = "none";
+      resultDiv.textContent = "❌ Could not connect to backend.";
+      resultDiv.className = "error";
+    }
+  });
+</script>
 
 </body>
 </html>
