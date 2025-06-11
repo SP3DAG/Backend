@@ -71,7 +71,7 @@
     container.innerHTML = "Loading QR code...";
 
     try {
-      const response = await fetch("http://localhost:8000/generate-qr-link");
+      const response = await fetch("https://backend-dzm1.onrender.com/generate-qr-link");
       if (!response.ok) {
         container.innerHTML = "Failed to generate QR code.";
         return;
@@ -111,7 +111,7 @@
     formData.append("device_uuid", deviceId);
 
     try {
-      const response = await fetch("http://localhost:8000/verify-image/", {
+      const response = await fetch("https://backend-dzm1.onrender.com/verify-image/", {
         method: "POST",
         body: formData
       });
