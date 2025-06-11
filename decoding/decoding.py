@@ -1,67 +1,66 @@
 from PIL import Image
 import numpy as np
-import cv2
 import os
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
+import cv2
 
 QR_BLOCK_SIZE = 8
 QR_SIZE = 47
-SIGNATURE_BIT_LENGTH = 520 * 8
 
-def extract_qr_from_blue_lsb(image_path, qr_shape=(QR_SIZE, QR_SIZE), block_size=QR_BLOCK_SIZE, top=0, left=0):
-    img = Image.open(image_path).convert("RGB")
-    np_img = np.array(img)
-    h, w = qr_shape
+def flatten_qr_matrix(qr_matrix):
+    flat_bits = [bit for row in qr_matrix for bit in row]
+    return bytes(flat_bits)
 
-    matrix = np.zeros((h, w), dtype=np.uint8)
-    for i in range(h):
-        for j in range(w):
-            y = top + i * block_size
-            x = left + j * block_size
-            bits = []
-            for dy in range(block_size):
-                for dx in range(block_size):
-                    yy, xx = y + dy, x + dx
-                    if yy >= np_img.shape[0] or xx >= np_img.shape[1]:
-                        continue
-                    blue = np_img[yy, xx, 2]
-                    bits.append(blue & 1)
-            matrix[i, j] = 1 if sum(bits) > len(bits) // 2 else 0
+def extract_qr_and_signature(image_path):
+    image = Image.open(image_path).convert("RGB")
+    pixels = np.array(image)
 
-    matrix = ((1 - matrix) * 255).astype(np.uint8)
-    matrix = np.pad(matrix, pad_width=4, constant_values=255)
-    qr_img = Image.fromarray(matrix)
-    return qr_img
+    height, width, _ = pixels.shape
+    qr_matrix = []
 
-def extract_signature_from_lsb(img, qr_shape, block_size, sig_bits_length, top=0, left=0):
-    sig_bits = []
-    qr_height_px = qr_shape[0] * block_size
-    qr_width_px = qr_shape[1] * block_size
-    np_img = np.array(img.convert("RGB"))
+    for y in range(QR_SIZE):
+        row = []
+        for x in range(QR_SIZE):
+            px = x * QR_BLOCK_SIZE
+            py = y * QR_BLOCK_SIZE
+            blue = pixels[py, px, 2]
+            row.append(blue & 1)
+        qr_matrix.append(row)
 
-    sig_rows = (sig_bits_length + qr_width_px - 1) // qr_width_px
-    sig_start_y = top + qr_height_px + 1
+    qr_pixel_h = QR_SIZE * QR_BLOCK_SIZE
+    sig_start_y = qr_pixel_h + 1
+    extracted_bits = []
 
-    sig_bit_index = 0
-    for row in range(sig_rows):
-        for col in range(qr_width_px):
-            if sig_bit_index >= sig_bits_length:
-                break
-            y = sig_start_y + row
-            x = left + col
-            if y >= np_img.shape[0] or x >= np_img.shape[1]:
+    for row in range(3):
+        y = sig_start_y + row
+        if y >= height:
+            continue
+        for x in range(QR_SIZE * QR_BLOCK_SIZE):
+            if x >= width:
                 continue
-            blue = np_img[y, x, 2]
-            sig_bits.append(blue & 1)
-            sig_bit_index += 1
+            blue = pixels[y, x, 2]
+            extracted_bits.append(blue & 1)
+            if len(extracted_bits) >= 8 + 72 * 8:
+                break
 
-    signature_bytes = bytes([
-        sum([bit << (7 - i) for i, bit in enumerate(sig_bits[j:j + 8])])
-        for j in range(0, len(sig_bits), 8)
-    ])
-    return signature_bytes
+    length_byte_bits = extracted_bits[:8]
+    sig_len = int(sum([(bit << (7 - i)) for i, bit in enumerate(length_byte_bits)]))
+
+    if sig_len <= 0 or sig_len > 72:
+        raise ValueError(f"Invalid signature length: {sig_len}")
+
+    sig_bits = extracted_bits[8:8 + sig_len * 8]
+    sig_bytes = bytearray()
+    for i in range(0, len(sig_bits), 8):
+        byte = 0
+        for bit in sig_bits[i:i+8]:
+            byte = (byte << 1) | bit
+        sig_bytes.append(byte)
+
+    flattened = flatten_qr_matrix(qr_matrix)
+    return flattened, bytes(sig_bytes)
 
 def load_public_key(device_id):
     path = f"public_keys/{device_id}.pem"
@@ -70,41 +69,38 @@ def load_public_key(device_id):
     with open(path, "rb") as f:
         return load_pem_public_key(f.read())
 
-def decode_qr_image(image_path, device_id, qr_shape=(QR_SIZE, QR_SIZE), block_size=QR_BLOCK_SIZE):
-    # Step 1: Extract QR from LSB
-    qr_img = extract_qr_from_blue_lsb(image_path, qr_shape, block_size)
-    #qr_img.save("debug_extracted_qr.png")  # Optional debug image
-
-    arr = np.array(qr_img)
-    upscaled = cv2.resize(arr, (arr.shape[1] * 10, arr.shape[0] * 10), interpolation=cv2.INTER_NEAREST)
-    
-    detector = cv2.QRCodeDetector()
-    val, points, _ = detector.detectAndDecode(upscaled)
-    if not val or points is None:
-        print("No QR code detected")
-        return None
-
-    message = val.strip()
-    print(f"Extracted message: {message}")
-
-    # Step 2: Extract signature from LSB region under QR
-    signature = extract_signature_from_lsb(
-        Image.open(image_path),
-        qr_shape=qr_shape,
-        block_size=block_size,
-        sig_bits_length=SIGNATURE_BIT_LENGTH
-    )
-
-    # Step 3: Load public key and verify
+def decode_qr_image(image_path, device_id):
     try:
+        # Step 1: Extract raw QR bits and signature
+        raw_data, signature = extract_qr_and_signature(image_path)
+
+        # Step 2: Decode the QR message using OpenCV
+        qr_matrix = np.array(list(raw_data)).reshape((QR_SIZE, QR_SIZE)) * 255
+        qr_matrix = qr_matrix.astype(np.uint8)
+        qr_matrix = np.pad(qr_matrix, pad_width=4, constant_values=255)
+
+        img = Image.fromarray(qr_matrix)
+        upscaled = cv2.resize(np.array(img), (470, 470), interpolation=cv2.INTER_NEAREST)
+
+        detector = cv2.QRCodeDetector()
+        val, points, _ = detector.detectAndDecode(upscaled)
+        if not val or points is None:
+            print("QR decoding failed")
+            return None
+
+        message = val.strip()
+        print(f"Extracted message: {message}")
+
+        # Step 3: Verify signature
         public_key = load_public_key(device_id)
         public_key.verify(
             signature,
-            message.encode("utf-8"),
+            raw_data,
             ec.ECDSA(hashes.SHA256())
         )
         print("Signature is valid")
         return message
+
     except Exception as e:
-        print(f"Signature verification failed: {e}")
+        print(f"Verification failed: {e}")
         return None
