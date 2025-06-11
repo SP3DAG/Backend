@@ -69,7 +69,7 @@ def load_public_key(device_id):
     with open(path, "rb") as f:
         return load_pem_public_key(f.read())
 
-def decode_qr_image(image_path, device_id):
+def decode_qr_image(image_path, public_key):
     try:
         # Step 1: Extract raw QR bits and signature
         raw_data, signature = extract_qr_and_signature(image_path)
@@ -91,8 +91,7 @@ def decode_qr_image(image_path, device_id):
         message = val.strip()
         print(f"Extracted message: {message}")
 
-        # Step 3: Verify signature
-        public_key = load_public_key(device_id)
+        # Step 3: Verify signature using the injected public key
         public_key.verify(
             signature,
             raw_data,

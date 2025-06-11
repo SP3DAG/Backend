@@ -3,12 +3,14 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta, timezone
 import secrets, json, io, os, qrcode
+from cryptography.hazmat.primitives.serialization import load_pem_public_key
 
 from decoding.decoding import decode_qr_image
 
 # === In-memory token & ID tracking ===
 tokens = {}
 device_id_counter = 0
+public_keys = {}  # In-memory store for public keys by device ID
 
 def generate_device_id():
     global device_id_counter
@@ -46,9 +48,16 @@ app.add_middleware(
 
 # === Helper: Save public key ===
 def save_public_key(device_id: str, public_key: str):
+    public_keys[device_id] = public_key
     os.makedirs("public_keys", exist_ok=True)
     with open(f"public_keys/{device_id}.pem", "w") as f:
         f.write(public_key)
+
+def get_public_key(device_id: str):
+    key_pem = public_keys.get(device_id)
+    if not key_pem:
+        raise FileNotFoundError(f"No public key found for device: {device_id}")
+    return load_pem_public_key(key_pem.encode())
 
 # === Routes ===
 
@@ -93,7 +102,8 @@ async def verify_image(device_uuid: str = Form(...), file: UploadFile = File(...
         with open("temp_uploaded.png", "wb") as f:
             f.write(contents)
 
-        decoded_message = decode_qr_image("temp_uploaded.png", device_id=device_uuid)
+        public_key = get_public_key(device_uuid)
+        decoded_message = decode_qr_image("temp_uploaded.png", public_key=public_key)
         if not decoded_message:
             raise HTTPException(status_code=422, detail="QR decode or signature invalid.")
 
