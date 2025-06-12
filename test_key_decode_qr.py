@@ -1,11 +1,13 @@
 from PIL import Image
 import numpy as np
+import hashlib
 import cv2
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.serialization import load_pem_public_key
 
 QR_BLOCK_SIZE = 8
-QR_SIZE = 47
+QR_SIZE = 47  # QR code is 47x47 modules
 
 def flatten_qr_matrix(qr_matrix):
     return bytes(bit for row in qr_matrix for bit in row)
@@ -69,9 +71,23 @@ def verify_signature(data, signature, public_key):
     except Exception:
         return False
 
-def decode_qr_image(image_path, public_key):
-    qr_matrix, data, signature = extract_qr_and_signature(image_path)
-    if not verify_signature(data, signature, public_key):
-        return None
-    qr_img = qr_matrix_to_image(qr_matrix)
-    return decode_qr_image_opencv(qr_img)
+if __name__ == "__main__":
+    image_path = "/Users/moritzdenk/Documents/IMG_2007.PNG"
+    public_key_path = 'public_keys/my-key.pem'
+
+    with open(public_key_path, 'rb') as f:
+        public_key = load_pem_public_key(f.read())
+
+    try:
+        qr_matrix, data, signature = extract_qr_and_signature(image_path)
+        is_valid = verify_signature(data, signature, public_key)
+
+        qr_img = qr_matrix_to_image(qr_matrix)
+        qr_img.save("reconstructed_qr.png")
+
+        qr_message = decode_qr_image_opencv(qr_img)
+
+        print("Signature is VALID" if is_valid else "Signature is INVALID")
+        print("Decoded QR message:", qr_message)
+    except Exception as e:
+        print(f"Verification failed: {e}")
