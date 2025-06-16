@@ -18,7 +18,7 @@ def qr_matrix_to_image(qr_matrix, scale=10, quiet_zone=4):
     for y in range(size):
         for x in range(size):
             pixels[x + quiet_zone, y + quiet_zone] = 0 if qr_matrix[y][x] == 1 else 255
-    return img.resize((total_size * scale, total_size * scale), Image.BILINEAR)
+    return img.resize((total_size * scale, total_size * scale), Image.NEAREST)
 
 def decode_qr_image_opencv(qr_img_pil):
     qr_img_np = np.array(qr_img_pil.convert("RGB"))
