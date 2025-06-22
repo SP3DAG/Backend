@@ -116,22 +116,27 @@ async def complete_link(token: str = Form(...), public_key: str = Form(...)):
     })
 
 @app.post("/verify-image/")
-async def verify_image(device_uuid: str = Form(...), file: UploadFile = File(...)):
+async def verify_image(file: UploadFile = File(...)):
     try:
         contents = await file.read()
         with open("temp_uploaded.png", "wb") as f:
             f.write(contents)
 
-        public_key = get_public_key(device_uuid)
-        decoded_message = decode_qr_image("temp_uploaded.png", public_key=public_key)
+        # QR decoding will extract the GeoCam ID and use it to verify
+        from decoding.decoding import decode_qr_image
+        decoded_message = decode_qr_image("temp_uploaded.png")
+
         if not decoded_message:
             raise HTTPException(status_code=422, detail="QR decode or signature invalid.")
 
         return JSONResponse(content={"decoded_message": decoded_message})
+    
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    
     except HTTPException:
-        raise  # Preserve 422 and 404
+        raise  # preserve raised ones
+    
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Image processing failed: {str(e)}")
     
