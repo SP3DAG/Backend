@@ -3,9 +3,12 @@ import numpy as np
 import cv2
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.serialization import load_pem_public_key
+import os
 
 QR_BLOCK_SIZE = 8
 QR_SIZE = 47
+PUBLIC_KEY_FOLDER = "public_keys"
 
 def flatten_qr_matrix(qr_matrix):
     return bytes(bit for row in qr_matrix for bit in row)
@@ -39,7 +42,7 @@ def extract_qr_and_signature(image_path):
     qr_pixel_h = QR_SIZE * QR_BLOCK_SIZE
     sig_start_y = qr_pixel_h + 1
     extracted_bits = []
-    for row in range(3):
+    for row in range(3):  # assume signature fits in 3 rows max
         y = sig_start_y + row
         if y >= pixels.shape[0]:
             continue
@@ -62,6 +65,13 @@ def extract_qr_and_signature(image_path):
         sig_bytes.append(byte)
     return qr_matrix, flatten_qr_matrix(qr_matrix), bytes(sig_bytes)
 
+def get_public_key_by_device_id(device_id):
+    path = os.path.join(PUBLIC_KEY_FOLDER, f"{device_id}.pem")
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"No public key found for device ID: {device_id}")
+    with open(path, "rb") as f:
+        return load_pem_public_key(f.read())
+
 def verify_signature(data, signature, public_key):
     try:
         public_key.verify(signature, data, ec.ECDSA(hashes.SHA256()))
@@ -69,9 +79,27 @@ def verify_signature(data, signature, public_key):
     except Exception:
         return False
 
-def decode_qr_image(image_path, public_key):
+def decode_qr_image(image_path):
+    # Extract QR matrix and signature from image
     qr_matrix, data, signature = extract_qr_and_signature(image_path)
-    if not verify_signature(data, signature, public_key):
-        return None
+
+    # Decode QR visually to get GeoCam ID + payload
     qr_img = qr_matrix_to_image(qr_matrix)
-    return decode_qr_image_opencv(qr_img)
+    payload = decode_qr_image_opencv(qr_img)
+
+    # Parse GeoCam ID (assume it's the prefix before a colon or space)
+    parts = payload.split(":", 1)
+    if len(parts) < 2:
+        raise ValueError("Invalid QR payload format: expected 'GeoCam_ID: message'")
+
+    device_id = parts[0].strip()
+    message = payload.strip()
+
+    # Get the public key for this GeoCam device
+    public_key = get_public_key_by_device_id(device_id)
+
+    # Verify signature using the correct key
+    if not verify_signature(data, signature, public_key):
+        raise ValueError("Signature verification failed.")
+
+    return message

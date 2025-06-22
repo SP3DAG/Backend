@@ -2,7 +2,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta, timezone
-import secrets, json, io, os, qrcode
+import secrets, json, os
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
 
 from decoding.decoding import decode_qr_image
@@ -34,6 +34,29 @@ def get_token(token):
 
 def delete_token(token):
     tokens.pop(token, None)
+
+def save_public_key(device_id: str, public_key: str):
+    public_keys[device_id] = public_key
+    os.makedirs("public_keys", exist_ok=True)
+
+    # Save PEM file for signature verification
+    with open(f"public_keys/{device_id}.pem", "w") as f:
+        f.write(public_key)
+
+    # Save/update JSON key registry
+    json_path = "public_keys/public_keys.json"
+
+    try:
+        with open(json_path, "r") as f:
+            existing = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        existing = {}
+
+    existing[device_id] = public_key
+
+    with open(json_path, "w") as f:
+        json.dump(existing, f, indent=2)
+
 
 # === FastAPI Setup ===
 app = FastAPI()
@@ -111,6 +134,15 @@ async def verify_image(device_uuid: str = Form(...), file: UploadFile = File(...
         raise  # Preserve 422 and 404
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Image processing failed: {str(e)}")
+    
+@app.get("/api/public-keys")
+async def get_public_keys():
+    json_path = "public_keys/public_keys.json"
+    if not os.path.exists(json_path):
+        return {}
+
+    with open(json_path, "r") as f:
+        return json.load(f)
 
 # === Run Locally (or on Render) ===
 if __name__ == "__main__":
