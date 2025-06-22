@@ -35,14 +35,17 @@ def decode_qr_image_opencv(qr_img_pil):
 def extract_qr_and_signature(image_path):
     image = Image.open(image_path).convert("RGB")
     pixels = np.array(image)
+
+    # Extract QR matrix
     qr_matrix = [
         [pixels[y * QR_BLOCK_SIZE, x * QR_BLOCK_SIZE, 2] & 1 for x in range(QR_SIZE)]
         for y in range(QR_SIZE)
     ]
+
     qr_pixel_h = QR_SIZE * QR_BLOCK_SIZE
     sig_start_y = qr_pixel_h + 1
     extracted_bits = []
-    for row in range(3):  # assume signature fits in 3 rows max
+    for row in range(10):  # increase to ensure we cover long IDs + signature
         y = sig_start_y + row
         if y >= pixels.shape[0]:
             continue
@@ -50,20 +53,37 @@ def extract_qr_and_signature(image_path):
             if x >= pixels.shape[1]:
                 continue
             extracted_bits.append(pixels[y, x, 2] & 1)
-            if len(extracted_bits) >= 8 + 72 * 8:
-                break
-    length_byte_bits = extracted_bits[:8]
-    sig_len = int(sum([(bit << (7 - i)) for i, bit in enumerate(length_byte_bits)]))
-    if sig_len <= 0 or sig_len > 72:
-        raise ValueError(f"Invalid signature length: {sig_len}")
-    sig_bits = extracted_bits[8:8 + sig_len * 8]
+
+    # === Decode device ID length ===
+    device_id_len_bits = extracted_bits[:8]
+    device_id_len = int(''.join(str(b) for b in device_id_len_bits), 2)
+
+    # === Decode device ID ===
+    device_id_bits = extracted_bits[8:8 + device_id_len * 8]
+    device_id_bytes = bytearray()
+    for i in range(0, len(device_id_bits), 8):
+        byte = 0
+        for bit in device_id_bits[i:i+8]:
+            byte = (byte << 1) | bit
+        device_id_bytes.append(byte)
+    device_id = device_id_bytes.decode('utf-8')
+
+    # === Decode signature length ===
+    sig_len_start = 8 + device_id_len * 8
+    sig_len_bits = extracted_bits[sig_len_start:sig_len_start + 8]
+    sig_len = int(''.join(str(b) for b in sig_len_bits), 2)
+
+    # === Decode signature ===
+    sig_bits_start = sig_len_start + 8
+    sig_bits = extracted_bits[sig_bits_start:sig_bits_start + sig_len * 8]
     sig_bytes = bytearray()
     for i in range(0, len(sig_bits), 8):
         byte = 0
         for bit in sig_bits[i:i+8]:
             byte = (byte << 1) | bit
         sig_bytes.append(byte)
-    return qr_matrix, flatten_qr_matrix(qr_matrix), bytes(sig_bytes)
+
+    return qr_matrix, flatten_qr_matrix(qr_matrix), bytes(sig_bytes), device_id
 
 def get_public_key_by_device_id(device_id):
     path = os.path.join(PUBLIC_KEY_FOLDER, f"{device_id}.pem")
@@ -80,26 +100,16 @@ def verify_signature(data, signature, public_key):
         return False
 
 def decode_qr_image(image_path):
-    # Extract QR matrix and signature from image
-    qr_matrix, data, signature = extract_qr_and_signature(image_path)
+    # Extract embedded content
+    qr_matrix, data, signature, device_id = extract_qr_and_signature(image_path)
 
-    # Decode QR visually to get GeoCam ID + payload
-    qr_img = qr_matrix_to_image(qr_matrix)
-    payload = decode_qr_image_opencv(qr_img)
-
-    # Parse GeoCam ID (assume it's the prefix before a colon or space)
-    parts = payload.split(":", 1)
-    if len(parts) < 2:
-        raise ValueError("Invalid QR payload format: expected 'GeoCam_ID: message'")
-
-    device_id = parts[0].strip()
-    message = payload.strip()
-
-    # Get the public key for this GeoCam device
+    # Retrieve public key for the extracted device ID
     public_key = get_public_key_by_device_id(device_id)
 
-    # Verify signature using the correct key
+    # Verify signature
     if not verify_signature(data, signature, public_key):
         raise ValueError("Signature verification failed.")
 
-    return message
+    # Decode actual QR message
+    qr_img = qr_matrix_to_image(qr_matrix)
+    return decode_qr_image_opencv(qr_img)
