@@ -65,19 +65,16 @@ def get_public_key(device_id: str):
 def home():
     return {"message": "GeoCam backend running"}
 
-@app.get("/generate-qr-link")
-async def generate_qr_link():
+@app.get("/api/generate-link-token")
+async def generate_link_token():
     device_id = generate_device_id()
     token = secrets.token_urlsafe(16)
     store_token(token, device_id)
 
-    qr_payload = {"token": token, "uuid": device_id}
-    qr_img = qrcode.make(json.dumps(qr_payload))
-    buf = io.BytesIO()
-    qr_img.save(buf, format="PNG")
-    buf.seek(0)
-
-    return StreamingResponse(buf, media_type="image/png")
+    return JSONResponse({
+        "token": token,
+        "device_uuid": device_id
+    })
 
 @app.post("/api/complete-link")
 async def complete_link(token: str = Form(...), public_key: str = Form(...)):
