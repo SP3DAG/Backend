@@ -8,7 +8,7 @@ import os
 
 QR_BLOCK_SIZE = 8
 QR_SIZE = 47
-PUBLIC_KEY_FOLDER = "public_keys"
+PUBLIC_KEY_FOLDER = "/var/data/public_keys"
 
 def flatten_qr_matrix(qr_matrix):
     return bytes(bit for row in qr_matrix for bit in row)
