@@ -69,13 +69,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# === Helper: Save public key ===
-def save_public_key(device_id: str, public_key: str):
-    public_keys[device_id] = public_key
-    os.makedirs("public_keys", exist_ok=True)
-    with open(f"public_keys/{device_id}.pem", "w") as f:
-        f.write(public_key)
-
 def get_public_key(device_id: str):
     key_pem = public_keys.get(device_id)
     if not key_pem:
