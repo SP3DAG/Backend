@@ -1,11 +1,16 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta, timezone
 import secrets, json, os
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
 
 from decoding.decoding import decode_qr_image
+
+# === Persistent Storage Setup ===
+PERSIST_DIR = os.getenv("PERSIST_DIR", "/var/data")
+KEYS_DIR = os.path.join(PERSIST_DIR, "public_keys")
+os.makedirs(KEYS_DIR, exist_ok=True)
 
 # === In-memory token & ID tracking ===
 tokens = {}
@@ -37,14 +42,14 @@ def delete_token(token):
 
 def save_public_key(device_id: str, public_key: str):
     public_keys[device_id] = public_key
-    os.makedirs("public_keys", exist_ok=True)
 
-    # Save PEM file for signature verification
-    with open(f"public_keys/{device_id}.pem", "w") as f:
+    # Save PEM file
+    pem_path = os.path.join(KEYS_DIR, f"{device_id}.pem")
+    with open(pem_path, "w") as f:
         f.write(public_key)
 
-    # Save/update JSON key registry
-    json_path = "public_keys/public_keys.json"
+    # Update JSON key registry
+    json_path = os.path.join(KEYS_DIR, "public_keys.json")
 
     try:
         with open(json_path, "r") as f:
@@ -56,7 +61,6 @@ def save_public_key(device_id: str, public_key: str):
 
     with open(json_path, "w") as f:
         json.dump(existing, f, indent=2)
-
 
 # === FastAPI Setup ===
 app = FastAPI()
@@ -111,13 +115,12 @@ async def complete_link(token: str = Form(...), public_key: str = Form(...)):
 @app.post("/verify-image/")
 async def verify_image(file: UploadFile = File(...)):
     try:
+        temp_path = os.path.join(PERSIST_DIR, "temp_uploaded.png")
         contents = await file.read()
-        with open("temp_uploaded.png", "wb") as f:
+        with open(temp_path, "wb") as f:
             f.write(contents)
 
-        # QR decoding will extract the GeoCam ID and use it to verify
-        from decoding.decoding import decode_qr_image
-        decoded_message = decode_qr_image("temp_uploaded.png")
+        decoded_message = decode_qr_image(temp_path)
 
         if not decoded_message:
             raise HTTPException(status_code=422, detail="QR decode or signature invalid.")
@@ -135,14 +138,13 @@ async def verify_image(file: UploadFile = File(...)):
     
 @app.get("/api/public-keys")
 async def get_public_keys():
-    json_path = "public_keys/public_keys.json"
+    json_path = os.path.join(KEYS_DIR, "public_keys.json")
     if not os.path.exists(json_path):
         return {}
 
     with open(json_path, "r") as f:
         return json.load(f)
 
-# === Run Locally (or on Render) ===
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=10000)
