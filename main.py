@@ -1,5 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta, timezone
 import secrets, json, os
@@ -136,14 +136,17 @@ async def verify_image(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Image processing failed: {str(e)}")
     
-@app.get("/api/public-keys")
-async def get_public_keys():
+@app.get("/api/public-keys", response_class=FileResponse)
+async def download_public_keys():
     json_path = os.path.join(KEYS_DIR, "public_keys.json")
     if not os.path.exists(json_path):
-        return {}
-
-    with open(json_path, "r") as f:
-        return json.load(f)
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    return FileResponse(
+        path=json_path,
+        media_type="application/json",
+        filename="public_keys.json"
+    )
 
 if __name__ == "__main__":
     import uvicorn
