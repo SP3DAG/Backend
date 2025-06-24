@@ -15,7 +15,7 @@ os.makedirs(KEYS_DIR, exist_ok=True)
 # === In-memory token & ID tracking ===
 tokens = {}
 device_id_counter = 0
-public_keys = {}  # In-memory store for public keys by device ID
+public_keys = {}
 
 def generate_device_id():
     global device_id_counter
