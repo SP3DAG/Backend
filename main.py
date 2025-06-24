@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import secrets, json, os
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
 
-from decoding.decoding import decode_qr_image
+from decoding.decoding import decode_all_qr_codes
 
 # === Persistent Storage Setup ===
 PERSIST_DIR = os.getenv("PERSIST_DIR", "/var/data")
@@ -120,19 +120,26 @@ async def verify_image(file: UploadFile = File(...)):
         with open(temp_path, "wb") as f:
             f.write(contents)
 
-        decoded_message = decode_qr_image(temp_path)
+        decoded_results = decode_all_qr_codes(temp_path)
 
-        if not decoded_message:
-            raise HTTPException(status_code=422, detail="QR decode or signature invalid.")
+        if not decoded_results:
+            raise HTTPException(status_code=422, detail="No valid QR/signature pair found.")
 
-        return JSONResponse(content={"decoded_message": decoded_message})
-    
+        # Ensure all payloads are the same
+        payloads = {r['payload'] for r in decoded_results}
+        if len(payloads) != 1:
+            raise HTTPException(status_code=422, detail="Inconsistent QR messages found.")
+
+        return JSONResponse(content={
+            "decoded_message": payloads.pop()
+        })
+
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    
+
     except HTTPException:
-        raise  # preserve raised ones
-    
+        raise
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Image processing failed: {str(e)}")
     
