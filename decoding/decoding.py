@@ -6,97 +6,113 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
 import os
 import math
-from typing import List, Dict
+from typing import List, Tuple, Dict
 
 PUBLIC_KEY_FOLDER = "/var/data/public_keys"
 
-def extract_qr_and_signature_at(pixels: np.ndarray,
-                                offset_x: int,
-                                offset_y: int,
-                                block_size: int = 8,
-                                qr_size: int = 47):
+def bits_to_bytes(bits: List[int]) -> bytes:
+    """Converts a list of 0/1 integers to a bytes object (MSB first)."""
+    out = bytearray()
+    for i in range(0, len(bits), 8):
+        byte = 0
+        for bit in bits[i:i+8]:
+            byte = (byte << 1) | bit
+        out.append(byte)
+    return bytes(out)
+
+
+def extract_qr_and_signature_at(
+        pixels: np.ndarray,
+        offset_x: int,
+        offset_y: int,
+        block_size: int = 8,
+        qr_size: int = 47
+) -> Tuple[
+        List[List[int]],      # qr_matrix
+        bytes,                # sig_input  (bitmap‖device_id‖total_qr_count‖qr_index)
+        bytes,                # signature
+        str,                  # device_id
+        int,                  # total_qr_count
+        int                   # qr_index
+]:
     """
-    Extracts a QR matrix, flattened data, digital signature, and device ID
-    from a given offset within an image's pixel array.
+    Reads one QR tile plus its metadata from the pixel array.
 
-    Args:
-        pixels (np.ndarray): The full RGB pixel array from the input image.
-        offset_x (int): The x-pixel coordinate of the top-left QR module.
-        offset_y (int): The y-pixel coordinate of the top-left QR module.
-        block_size (int, optional): Pixel width of one QR module. Defaults to 8.
-        qr_size (int, optional): Number of modules per side (should be 47). Defaults to 47.
+    The wire format (bit stream) is now:
+        8  bits  device_id_length
+        N  bytes device_id
+        8  bits  total_qr_count          (NEW)
+        8  bits  qr_index                (NEW)
+        8  bits  signature_length
+        S  bytes signature
 
-    Returns:
-        Tuple[List[List[int]], bytes, bytes, str]:
-            - QR matrix as 2D list
-            - Flattened matrix as bytes (for signature verification)
-            - Signature bytes
-            - Extracted device ID as a string
-
-    Raises:
-        ValueError: If metadata (device ID or signature) is incomplete or malformed.
+    The ECDSA signature is computed over:
+        flatten(qr_matrix) || device_id || total_qr_count || qr_index
     """
     qr_pw = qr_size * block_size
-    qr_ph = qr_pw
 
+    # read QR bitmap
     qr_matrix = [
-        [pixels[offset_y + y*block_size, offset_x + x*block_size, 2] & 1
+        [pixels[offset_y + y*block_size,
+                offset_x + x*block_size, 2] & 1          # blue-LSB
          for x in range(qr_size)]
         for y in range(qr_size)
     ]
-    data = flatten_qr_matrix(qr_matrix)
+    bitmap_bytes = bytes(b for row in qr_matrix for b in row)   # flatten
 
-    sig_start_y = offset_y + qr_ph + 1
+    # read metadata bits
+    sig_start_y = offset_y + qr_pw + 1      # first row below the QR bitmap
     extracted_bits: List[int] = []
 
-    max_rows = 20
-    qr_pw_pixels = qr_pw
-
-    for row in range(max_rows):
+    # read up to 20 rows (enough for very long IDs/signatures)
+    for row in range(20):
         y = sig_start_y + row
         if y >= pixels.shape[0]:
             break
-        for px in range(qr_pw_pixels):
+        for px in range(qr_pw):
             x = offset_x + px
             if x >= pixels.shape[1]:
                 break
             extracted_bits.append(pixels[y, x, 2] & 1)
 
-    if len(extracted_bits) < 16:
-        raise ValueError("Metadata truncated (no lengths).")
+    # parse |device_id|
+    if len(extracted_bits) < 8:
+        raise ValueError("metadata truncated (device-ID length)")
 
     device_id_len = int(''.join(str(b) for b in extracted_bits[:8]), 2)
-    need = 8 + device_id_len*8 + 8        # up to signature length field
+    need = 8 + device_id_len*8 + 8          # up through total_qr_count
     if len(extracted_bits) < need:
-        raise ValueError("Metadata truncated (device-ID).")
+        raise ValueError("metadata truncated (device-ID)")
 
-    device_id_bits = extracted_bits[8:8 + device_id_len * 8]
-    device_id_bytes = bytearray()
-    for i in range(0, len(device_id_bits), 8):
-        byte = 0
-        for bit in device_id_bits[i:i+8]:
-            byte = (byte << 1) | bit
-        device_id_bytes.append(byte)
-    device_id = device_id_bytes.decode('utf-8')
+    pos = 8
+    device_id_bits = extracted_bits[pos:pos + device_id_len*8]
+    device_id = bits_to_bytes(device_id_bits).decode('utf-8')
+    pos += device_id_len*8
 
-    sig_len_start = 8 + device_id_len * 8
-    sig_len = int(''.join(str(b) for b in extracted_bits[sig_len_start:
-                                                         sig_len_start + 8]), 2)
+    # new fields
+    total_qr_count = int(''.join(str(b) for b in extracted_bits[pos:pos+8]), 2)
+    pos += 8
+    qr_index = int(''.join(str(b) for b in extracted_bits[pos:pos+8]), 2)
+    pos += 8
 
-    total_needed = sig_len_start + 8 + sig_len * 8
-    if len(extracted_bits) < total_needed:
-        raise ValueError("Metadata truncated (signature).")
+    # signature
+    if len(extracted_bits) < pos + 8:
+        raise ValueError("metadata truncated (sig length)")
+    sig_len = int(''.join(str(b) for b in extracted_bits[pos:pos+8]), 2)
+    pos += 8
 
-    sig_bits_start = sig_len_start + 8
-    sig_bits = extracted_bits[sig_bits_start:sig_bits_start + sig_len * 8]
-    sig_bytes = bytearray()
-    for i in range(0, len(sig_bits), 8):
-        byte = 0
-        for bit in sig_bits[i:i+8]:
-            byte = (byte << 1) | bit
-        sig_bytes.append(byte)
+    if len(extracted_bits) < pos + sig_len*8:
+        raise ValueError("metadata truncated (sig body)")
+    sig_bits = extracted_bits[pos:pos + sig_len*8]
+    signature = bits_to_bytes(sig_bits)
 
-    return qr_matrix, data, bytes(sig_bytes), device_id
+    # build the exact message that was signed
+    sig_input = bitmap_bytes + device_id.encode() + \
+                bytes([total_qr_count, qr_index])
+
+    return (qr_matrix, sig_input, signature,
+            device_id, total_qr_count, qr_index)
+
 
 
 def decode_all_qr_codes(image_path: str,

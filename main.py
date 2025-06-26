@@ -115,25 +115,47 @@ async def complete_link(token: str = Form(...), public_key: str = Form(...)):
 @app.post("/verify-image/")
 async def verify_image(file: UploadFile = File(...)):
     try:
+        # 1) persist the upload
         temp_path = os.path.join(PERSIST_DIR, "temp_uploaded.png")
         contents = await file.read()
         with open(temp_path, "wb") as f:
             f.write(contents)
 
+        # 2) run the decoder   (returns ONLY fully-verified QR tiles)
+        #    Each element:  {"payload", "device_id", "total", "index"}
         decoded_results = decode_all_qr_codes(temp_path)
 
+        # no valid signatures at all
         if not decoded_results:
-            raise HTTPException(status_code=422, detail="No valid QR/signature pair found.")
+            raise HTTPException(status_code=422,
+                                detail="No valid QR/signature pair found.")
 
-        # Ensure all payloads are the same
-        payloads = {r['payload'] for r in decoded_results}
+        # 3) payload consistency check
+        payloads = {r["payload"] for r in decoded_results}
         if len(payloads) != 1:
-            raise HTTPException(status_code=422, detail="Inconsistent QR messages found.")
+            raise HTTPException(status_code=422,
+                                detail="Inconsistent QR messages found.")
+        message = payloads.pop()
 
+        # 4) structural integrity check
+        total_expected = decoded_results[0]["total"]      # signed!
+        indexes_found  = {r["index"] for r in decoded_results}
+
+        if (len(indexes_found) == total_expected and
+                indexes_found == set(range(total_expected))):
+            status = "verified"
+        else:
+            status = "verified_but_image_modified"
+
+        # 5) success JSON
         return JSONResponse(content={
-            "decoded_message": payloads.pop()
+            "status":          status,
+            "decoded_message": message,
+            "expected_qrs":    total_expected,
+            "found_qrs":       len(indexes_found)
         })
-
+    
+    # 6) error handling
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -141,7 +163,8 @@ async def verify_image(file: UploadFile = File(...)):
         raise
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Image processing failed: {str(e)}")
+        raise HTTPException(status_code=500,
+                            detail=f"Image processing failed: {str(e)}")
     
 @app.get("/api/public-keys", response_class=FileResponse)
 async def download_public_keys():
