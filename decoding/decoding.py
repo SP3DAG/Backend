@@ -34,89 +34,81 @@ def extract_qr_and_signature_at(
     qr_size: int = 47
 ) -> Tuple[
         List[List[int]],   # qr_matrix
-        bytes,             # sig_input  (bitmap‖device_id‖total‖index)
+        bytes,             # sig_input (bitmap‖deviceID‖totalTiles‖qr_index)
         bytes,             # signature
         str,               # device_id
-        int,               # total_qr_count
-        int                # qr_index
+        int,               # total_tiles (UInt16)
+        int                # qr_index   (UInt16, unique per tile)
 ]:
     """
-    Reads one QR tile plus its metadata.
+    Parses one QR tile plus its metadata in the NEW layout:
 
-    Bit stream (all in blue-channel LSBs, row-wise below the QR):
+        8   bits  device_id_length
+        N×8 bits  device_id (UTF-8)
+        16  bits  total_tiles      (big-endian)
+        16  bits  qr_index         (big-endian, unique per tile)
+        8   bits  signature_length
+        S×8 bits  ECDSA signature (DER)
 
-        8  bits  device_id_length
-        N  bytes device_id
-        8  bits  total_qr_count     (NEW)
-        8  bits  qr_index           (NEW)
-        8  bits  signature_length
-        S  bytes signature
-
-    Signature is ECDSA over:  bitmap || device_id || total || index
+    The signature is over:
+        flatten(qr_matrix) || device_id || total_tiles || qr_index
     """
-    qr_pw = qr_size * block_size
+    qr_pix = qr_size * block_size
 
-    # QR bitmap
+    # 1) read the QR bitmap
     qr_matrix = [
-        [pixels[offset_y + y * block_size,
-                offset_x + x * block_size, 2] & 1
+        [pixels[offset_y + y*block_size,
+                offset_x + x*block_size, 2] & 1
          for x in range(qr_size)]
         for y in range(qr_size)
     ]
-    bitmap_bytes = flatten_qr_matrix(qr_matrix)
+    bitmap_bytes = bytes(b for row in qr_matrix for b in row)
 
-    # Metadata bits
-    sig_start_y = offset_y + qr_pw + 1
+    # 2) collect metadata bits (max 20 lines)
     bits: List[int] = []
-
-    for row in range(20):
-        y = sig_start_y + row
+    meta_start_y = offset_y + qr_pix + 1
+    for r in range(20):
+        y = meta_start_y + r
         if y >= pixels.shape[0]:
             break
-        for px in range(qr_pw):
-            x = offset_x + px
+        for c in range(qr_pix):
+            x = offset_x + c
             if x >= pixels.shape[1]:
                 break
             bits.append(pixels[y, x, 2] & 1)
 
+    # ── 3) parse fields ─────────────────────────────────────────────────
     if len(bits) < 8:
-        raise ValueError("metadata truncated (device-ID length)")
+        raise ValueError("metadata truncated (ID length)")
 
-    device_id_len = int("".join(str(b) for b in bits[:8]), 2)
-    need = 8 + device_id_len * 8 + 8
+    dev_len = int("".join(map(str, bits[0:8])), 2)
+    need = 8 + dev_len*8 + 16 + 16 + 8
     if len(bits) < need:
-        raise ValueError("metadata truncated (device-ID)")
+        raise ValueError("metadata truncated (deviceID)")
 
     pos = 8
-    device_id_bits = bits[pos:pos + device_id_len * 8]
-    device_id = bits_to_bytes(device_id_bits).decode("utf-8")
-    pos += device_id_len * 8
+    dev_bits = bits[pos:pos+dev_len*8];  pos += dev_len*8
+    device_id = bytes(int("".join(map(str, dev_bits[i:i+8])), 2)
+                      for i in range(0, len(dev_bits), 8)).decode()
 
-    total_qr_count = int("".join(str(b) for b in bits[pos:pos + 8]), 2)
-    pos += 8
-    qr_index = int("".join(str(b) for b in bits[pos:pos + 8]), 2)
-    pos += 8
+    total_tiles = int("".join(map(str, bits[pos:pos+16])), 2); pos += 16
+    qr_index    = int("".join(map(str, bits[pos:pos+16])), 2); pos += 16
 
-    if len(bits) < pos + 8:
-        raise ValueError("metadata truncated (sig length)")
-    sig_len = int("".join(str(b) for b in bits[pos:pos + 8]), 2)
-    pos += 8
+    sig_len     = int("".join(map(str, bits[pos:pos+8])), 2);  pos += 8
+    if len(bits) < pos + sig_len*8:
+        raise ValueError("metadata truncated (signature)")
+    sig_bits = bits[pos:pos+sig_len*8]
+    signature = bytes(int("".join(map(str, sig_bits[i:i+8])), 2)
+                      for i in range(0, len(sig_bits), 8))
 
-    if len(bits) < pos + sig_len * 8:
-        raise ValueError("metadata truncated (sig body)")
-    sig_bits = bits[pos:pos + sig_len * 8]
-    signature = bits_to_bytes(sig_bits)
+    # build the message exactly as the camera signed it
+    sig_input = (bitmap_bytes +
+                 device_id.encode() +
+                 total_tiles.to_bytes(2, "big") +
+                 qr_index   .to_bytes(2, "big"))
 
-    sig_input = bitmap_bytes + device_id.encode() + bytes([total_qr_count, qr_index])
-
-    return (
-        qr_matrix,
-        sig_input,
-        signature,
-        device_id,
-        total_qr_count,
-        qr_index
-    )
+    return (qr_matrix, sig_input, signature,
+            device_id, total_tiles, qr_index)
 
 def get_public_key_by_device_id(device_id: str):
     path = os.path.join(PUBLIC_KEY_FOLDER, f"{device_id}.pem")
@@ -158,63 +150,58 @@ def decode_all_qr_codes(image_path: str,
                         spacing_px: int = 20,
                         qr_size: int = 47) -> List[Dict[str, str]]:
     """
-    Returns a list of dicts, **one per valid QR tile**:
+    Scans the whole image, verifies every tile, and returns:
 
         {
-          "payload":   <string>,
-          "device_id": <string>,
-          "total":     <int>,    # signed total_qr_count
-          "index":     <int>     # signed qr_index
+          "payload":   <str>,
+          "device_id": <str>,
+          "total":     <int>,   # signed totalTiles
+          "index":     <int>    # unique qr_index per tile
         }
     """
-    image = Image.open(image_path).convert("RGB")
-    pixels = np.array(image)
-    height, width = pixels.shape[:2]
+    img = Image.open(image_path).convert("RGB")
+    px  = np.array(img)
+    H, W = px.shape[:2]
 
-    qr_pw = qr_size * block_size
-    qr_ph = qr_pw
+    qr_pix = qr_size * block_size
     results: List[Dict[str, str]] = []
-    seen_signatures: set[bytes] = set()
 
-    # estimate how many rows of metadata we must skip per tile
+    # estimate how many metadata rows follow a tile
     try:
-        _m, _sig_in, _sig, _dev, _tot, _idx = extract_qr_and_signature_at(
-            pixels, 0, 0, block_size, qr_size
-        )
-        full_bits = 8 + len(_dev.encode()) * 8 + 8 + 8 + 8 + len(_sig) * 8
-        sig_rows = math.ceil(full_bits / qr_pw)
+        _m, _si, _sig, _dev, _tot, _idx = extract_qr_and_signature_at(
+            px, 0, 0, block_size, qr_size)
+        full_bits = (8 + len(_dev.encode())*8 + 16 + 16 + 8 +
+                     len(_sig)*8)
+        meta_rows = math.ceil(full_bits / qr_pix)
     except Exception:
-        sig_rows = 10
-
-    total_h_per_qr = qr_ph + sig_rows + 1
+        meta_rows = 12
+        
+    tile_h = qr_pix + 1 + meta_rows
 
     # brute-force grid scan
-    row_idx = 0
+    row = 0
     while True:
-        offset_y = int(round(row_idx * (total_h_per_qr + spacing_px)))
-        if offset_y + qr_ph > height:
+        off_y = int(round(row * (tile_h + spacing_px)))
+        if off_y + qr_pix > H:
             break
 
-        col_idx = 0
+        col = 0
         while True:
-            offset_x = int(round(col_idx * (qr_pw + spacing_px)))
-            if offset_x + qr_pw > width:
+            off_x = int(round(col * (qr_pix + spacing_px)))
+            if off_x + qr_pix > W:
                 break
 
             try:
-                (qr_matrix, sig_input, signature,
+                (qr_mat, sig_input, signature,
                  device_id, total, idx) = extract_qr_and_signature_at(
-                    pixels, offset_x, offset_y, block_size, qr_size
-                 )
+                     px, off_x, off_y, block_size, qr_size)
 
-                if signature in seen_signatures:
-                    raise ValueError("duplicate signature")
-
-                public_key = get_public_key_by_device_id(device_id)
-                verify_signature(sig_input, signature, public_key)
+                # cryptographic verification
+                pub = get_public_key_by_device_id(device_id)
+                verify_signature(sig_input, signature, pub)
 
                 payload = decode_qr_image_opencv(
-                    qr_matrix_to_image(qr_matrix))
+                    qr_matrix_to_image(qr_mat))
 
                 results.append({
                     "payload":   payload,
@@ -222,12 +209,11 @@ def decode_all_qr_codes(image_path: str,
                     "total":     total,
                     "index":     idx
                 })
-                seen_signatures.add(signature)
 
             except Exception:
                 pass
 
-            col_idx += 1
-        row_idx += 1
+            col += 1
+        row += 1
 
     return results

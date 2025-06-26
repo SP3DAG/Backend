@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # Load image and convert to RGB
-image = Image.open("/Users/moritzdenk/Documents/IMG_2126.PNG").convert("RGB")
+image = Image.open("/Users/moritzdenk/Documents/test_crop.PNG").convert("RGB")
 image_array = np.array(image)
 
 # Extract the blue channel (channel index 2)
