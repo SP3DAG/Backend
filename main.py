@@ -135,7 +135,7 @@ async def verify_image(file: UploadFile = File(...)):
         if len(payloads) != 1:
             raise HTTPException(status_code=422,
                                 detail="Inconsistent QR messages found.")
-        message = payloads.pop()
+        message = payloads.pop().rstrip("#")
 
         # 4) structural integrity check
         total_expected = decoded_results[0]["total"]      # signed!
