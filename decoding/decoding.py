@@ -31,7 +31,7 @@ def extract_qr_and_signature_at(
     offset_x: int,
     offset_y: int,
     block_size: int = 8,
-    qr_size: int = 47
+    qr_size: int = 49
 ) -> Tuple[
         List[List[int]],   # qr_matrix
         bytes,             # sig_input (bitmap‖deviceID‖totalTiles‖qr_index)
