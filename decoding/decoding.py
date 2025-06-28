@@ -148,7 +148,7 @@ def decode_qr_image_opencv(qr_img_pil: Image.Image) -> str:
 def decode_all_qr_codes(image_path: str,
                         block_size: int = 8,
                         spacing_px: int = 20,
-                        qr_size: int = 47) -> List[Dict[str, str]]:
+                        qr_size: int = 49) -> List[Dict[str, str]]:
     """
     Scans the whole image, verifies every tile, and returns:
 
