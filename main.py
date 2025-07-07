@@ -1,10 +1,11 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta, timezone
-import secrets, json, os
+import secrets, json, os, io
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
 
+from lsb_plot import plot_blue_lsb
 from decoding.decoding import decode_all_qr_codes
 
 # === Persistent Storage Setup ===
@@ -177,6 +178,25 @@ async def download_public_keys():
         media_type="application/json",
         filename="public_keys.json"
     )
+
+@app.post("/plot-lsb/")
+async def plot_lsb(file: UploadFile = File(...)):
+    """
+    Upload an image and receive a PNG visualising the blue-channel LSB
+    with QR tile bounding boxes.
+    """
+    try:
+        image_bytes = await file.read()
+        plot_bytes = plot_blue_lsb(image_bytes)
+
+        return StreamingResponse(
+            io.BytesIO(plot_bytes),
+            media_type="image/png",
+            headers={"Content-Disposition": 'inline; filename="lsb_debug.png"'}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500,
+                            detail=f"LSB plot generation failed: {e}")
 
 if __name__ == "__main__":
     import uvicorn
