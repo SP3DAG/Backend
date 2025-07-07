@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import secrets, json, os, io
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
 
-from lsb_plot import plot_blue_lsb
+from lsb_plot import plot_blue_lsb_pillow
 from decoding.decoding import decode_all_qr_codes
 
 # === Persistent Storage Setup ===
@@ -182,17 +182,17 @@ async def download_public_keys():
 @app.post("/plot-lsb/")
 async def plot_lsb(file: UploadFile = File(...)):
     """
-    Upload an image and receive a PNG visualising the blue-channel LSB
-    with QR tile bounding boxes.
+    Upload an image; receive a PNG visualising the blue-channel LSB.
+    Suitable for browsers or curl.
     """
     try:
-        image_bytes = await file.read()
-        plot_bytes = plot_blue_lsb(image_bytes)
+        img_bytes = await file.read()
+        png_bytes = plot_blue_lsb_pillow(img_bytes)
 
         return StreamingResponse(
-            io.BytesIO(plot_bytes),
+            io.BytesIO(png_bytes),
             media_type="image/png",
-            headers={"Content-Disposition": 'inline; filename="lsb_debug.png"'}
+            headers={"Content-Disposition": 'inline; filename="lsb_plot.png"'}
         )
     except Exception as e:
         raise HTTPException(status_code=500,

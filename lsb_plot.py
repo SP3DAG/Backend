@@ -1,36 +1,43 @@
-import math
 import io
-import numpy as np
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+import math
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 
-def plot_blue_lsb(image_bytes: bytes,
-                  block_size: int = 8,
-                  qr_size: int = 51,
-                  spacing_px: int = 20) -> bytes:
+BLOCK_SIZE = 8
+QR_SIZE    = 51
+SPACING_PX = 20
+
+
+def _estimate_meta_rows(qr_pix: int) -> int:
+    """Conservative upper bound – keeps the red-box grid correct."""
+    worst_bits = 8 + 64*8 + 16 + 16 + 8 + 640
+    return math.ceil(worst_bits / qr_pix)
+
+
+def plot_blue_lsb_pillow(image_bytes: bytes,
+                         block_size: int = BLOCK_SIZE,
+                         qr_size: int   = QR_SIZE,
+                         spacing_px: int = SPACING_PX) -> bytes:
     """
-    Takes raw image bytes (PNG or JPEG), returns PNG bytes visualizing:
-      - blue-channel LSB
-      - red boxes where QR tiles would be embedded
+    Return PNG bytes visualising the blue-channel LSB plane plus red rectangles
+    where each QR tile is expected.
     """
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    px = np.array(img)
-    H, W = px.shape[:2]
-    blue_lsb = (px[:, :, 2] & 1) * 255
+    img  = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    W, H = img.size
 
-    qr_pix = qr_size * block_size
-    meta_rows = 12  # conservative upper bound
-    tile_h = qr_pix + 1 + meta_rows
+    # 1) isolate blue-channel LSB as black/white mask
+    blue = img.split()[2]
+    lsb  = blue.point(lambda p: 0 if p & 1 else 255, mode='L')
+    vis  = Image.merge("RGB", (lsb, lsb, lsb))
 
-    fig, ax = plt.subplots(figsize=(8, 8))
-    ax.imshow(blue_lsb, cmap="gray", interpolation="nearest")
-    ax.set_title("Blue LSB Plane with Tile Outlines")
-    ax.axis("off")
+    draw = ImageDraw.Draw(vis, "RGBA")
 
+    qr_pix    = qr_size * block_size
+    meta_rows = _estimate_meta_rows(qr_pix)
+    tile_h    = qr_pix + 1 + meta_rows
+
+    # 2) add red rectangles
     row = 0
     while True:
         off_y = int(round(row * (tile_h + spacing_px)))
@@ -41,15 +48,14 @@ def plot_blue_lsb(image_bytes: bytes,
             off_x = int(round(col * (qr_pix + spacing_px)))
             if off_x + qr_pix > W:
                 break
-            rect = plt.Rectangle((off_x, off_y), qr_pix, qr_pix,
-                                 linewidth=1.5, edgecolor='red', facecolor='none')
-            ax.add_patch(rect)
+            draw.rectangle(
+                [off_x, off_y, off_x + qr_pix - 1, off_y + qr_pix - 1],
+                outline=(255, 0, 0, 255), width=2
+            )
             col += 1
         row += 1
 
-    buf = io.BytesIO()
-    plt.tight_layout()
-    plt.savefig(buf, format="png", dpi=150)
-    plt.close(fig)
-    buf.seek(0)
-    return buf.read()
+    # 3) encode PNG → bytes
+    out = io.BytesIO()
+    vis.save(out, format="PNG", optimize=True)
+    return out.getvalue()
