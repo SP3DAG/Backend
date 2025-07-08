@@ -26,7 +26,7 @@ def bits_to_bytes(bits: List[int]) -> bytes:
 def flatten_qr_matrix(qr_matrix: List[List[int]]) -> bytes:
     return bytes(bit for row in qr_matrix for bit in row)
 
-#  Core tile extraction + signature-input reconstruction
+#  Core tile-extraction + signature-input reconstruction
 def extract_qr_and_signature_at(
     pixels: np.ndarray,
     offset_x: int,
@@ -59,7 +59,7 @@ def extract_qr_and_signature_at(
     """
     qr_pix = qr_size * block_size
 
-    # 1) read the binary QR matrix (from blue LSB inside the tile)
+    # 1) read the binary QR matrix
     qr_matrix = [
         [pixels[offset_y + y * block_size,
                 offset_x + x * block_size, 2] & 1
@@ -67,7 +67,7 @@ def extract_qr_and_signature_at(
         for y in range(qr_size)
     ]
 
-    # 2) collect metadata bits (up to 20 rows is plenty for our payload)
+    # 2) collect metadata bits (20 rows is plenty for our payload)
     bits: List[int] = []
     meta_start_y = offset_y + qr_pix + 1
     for r in range(20):
@@ -113,16 +113,18 @@ def extract_qr_and_signature_at(
     )
 
     # 4) recreate the hash of the 7-MSBs of ALL RGB pixels in this tile
+    qr_area = pixels[
+        offset_y:offset_y + qr_pix,
+        offset_x:offset_x + qr_pix,
+        :
+    ]
+    # mask off LSBs
+    masked = qr_area & 0xFE
     hasher = hashlib.sha256()
-    for ty in range(qr_pix):
-        py = offset_y + ty
-        for tx in range(qr_pix):
-            px_ = offset_x + tx
-            r, g, b = pixels[py, px_, :3]
-            hasher.update(bytes([r & 0xFE, g & 0xFE, b & 0xFE]))
-    hash_digest = hasher.digest()   # 32 bytes
+    hasher.update(masked.tobytes())
+    hash_digest = hasher.digest()
 
-    # 5) rebuild sig_input (exact byte-sequence signed by the camera)
+    # 5) rebuild sig_input (byte-sequence signed by the camera)
     sig_input = (
         hash_digest +
         device_id.encode() +
@@ -174,13 +176,14 @@ def decode_qr_image_opencv(qr_img_pil: Image.Image) -> str:
         raise ValueError("OpenCV could not decode QR")
     return data
 
-#  Scan entire image for verified QR tiles
-def decode_all_qr_codes(image_path: str,
-                        block_size: int = 8,
-                        spacing_px: int = 20,
-                        qr_size: int = 51) -> List[Dict[str, str]]:
+#  Scan entire image for verified QR tiles (gap-free grid)
+def decode_all_qr_codes(
+    image_path: str,
+    block_size: int = 8,
+    qr_size: int = 51
+) -> List[Dict[str, str]]:
     """
-    Returns a list with one dict per *verified* QR tile:
+    Returns one dict per *verified* QR tile:
 
         {
           "payload":   <str>,
@@ -196,7 +199,7 @@ def decode_all_qr_codes(image_path: str,
     qr_pix = qr_size * block_size
     results: List[Dict[str, str]] = []
 
-    # rough estimate how many metadata rows follow a tile
+    # estimate how many metadata rows follow a tile
     try:
         _m, _si, _sig, _dev, _tot, _idx = extract_qr_and_signature_at(
             px, 0, 0, block_size, qr_size
@@ -204,22 +207,17 @@ def decode_all_qr_codes(image_path: str,
         full_bits = 8 + len(_dev.encode()) * 8 + 16 + 16 + 8 + len(_sig) * 8
         meta_rows = math.ceil(full_bits / qr_pix)
     except Exception:
-        meta_rows = 12
+        meta_rows = 12                                      # safe default
 
     tile_h = qr_pix + 1 + meta_rows
+    tiles_per_row = W // qr_pix
+    tiles_per_col = H // tile_h
 
-    # brute-force grid scan
-    row = 0
-    while True:
-        off_y = int(round(row * (tile_h + spacing_px)))
-        if off_y + qr_pix > H:
-            break
-
-        col = 0
-        while True:
-            off_x = int(round(col * (qr_pix + spacing_px)))
-            if off_x + qr_pix > W:
-                break
+    # rigid grid scan (no spacing)
+    for row in range(tiles_per_col):
+        off_y = row * tile_h
+        for col in range(tiles_per_row):
+            off_x = col * qr_pix
 
             try:
                 (qr_mat, sig_input, signature,
@@ -244,8 +242,5 @@ def decode_all_qr_codes(image_path: str,
 
             except Exception:
                 pass
-
-            col += 1
-        row += 1
 
     return results
