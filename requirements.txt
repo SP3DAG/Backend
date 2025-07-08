@@ -12,3 +12,4 @@ itsdangerous
 httpx
 jinja2
 redis
+qreader
