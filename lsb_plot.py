@@ -51,7 +51,7 @@ def plot_blue_lsb_pillow(image_bytes: bytes,
             # red rectangle = QR region
             draw.rectangle(
                 [off_x, off_y,
-                 off_x + qr_pix - 1, off_y + qr_pix - 1],
+                 off_x + qr_pix - 1, off_y + tile_h - 1],
                 outline=(255, 0, 0, 255), width=2
             )
             # optional blue rectangle = metadata rows
@@ -63,7 +63,7 @@ def plot_blue_lsb_pillow(image_bytes: bytes,
 
             if include_tiles:
                 tile_crop = vis.crop((off_x, off_y,
-                                      off_x + qr_pix, off_y + qr_pix))
+                                      off_x + qr_pix, off_y + tile_h))
                 thumbs.append(
                     tile_crop.resize((THUMB, THUMB), Image.NEAREST)
                 )
