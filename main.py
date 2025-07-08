@@ -1,9 +1,11 @@
-import os, io, json, secrets
+import os, json, secrets
 from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+
+from cryptography.hazmat.primitives.serialization import load_pem_public_key
 
 from decoding.decoding import decode_all_qr_codes
 
@@ -85,30 +87,26 @@ async def complete_link(token: str = Form(...), public_key: str = Form(...)):
 # Image verification
 @app.post("/verify-image/")
 async def verify_image(file: UploadFile = File(...)):
-    """
-    Accepts a PNG/JPEG with tiled-QR steganography.
-    Returns 'verified' if every tile is present & authentic,
-    else 'verified_but_image_modified' when at least one authentic tile exists.
-    """
     try:
         tmp_path = os.path.join(PERSIST_DIR, "temp_uploaded.png")
         with open(tmp_path, "wb") as fh:
             fh.write(await file.read())
 
-        tiles = decode_all_qr_codes(tmp_path)
+        # NEW: build device-id → public-key dict for the verifier
+        key_dict = {did: load_pem_public_key(pem.encode())
+                    for did, pem in public_keys.items()}
+
+        tiles = decode_all_qr_codes(tmp_path, key_dict)   # pass keys
 
         if not tiles:
             raise HTTPException(status_code=422,
                                 detail="No valid signed QR tiles found.")
-
-        # All tiles must share the same device_id
         dev_ids = {t["device_id"] for t in tiles}
         if len(dev_ids) != 1:
             raise HTTPException(status_code=422,
                                 detail="Mixed device IDs in image.")
         device_id = dev_ids.pop()
 
-        # Grid completeness test
         xs = {t["tile_x"] for t in tiles}
         ys = {t["tile_y"] for t in tiles}
         full_grid = (xs == set(range(max(xs)+1)) and
