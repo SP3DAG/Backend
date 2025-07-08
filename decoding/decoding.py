@@ -6,17 +6,14 @@ from PIL import Image
 import cv2
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
 
-
-# Constants (match the Swift embedder)
+# constants
 BLOCK_SIZE = 8
 MODULES    = 125
 QR_PIX     = BLOCK_SIZE * MODULES
 
-
 PUBLIC_KEY_FOLDER = "/var/data/public_keys"
 
-
-# Public-key helper
+# public-key helper
 def get_public_key(device_id: str):
     path = os.path.join(PUBLIC_KEY_FOLDER, f"{device_id}.pem")
     if not os.path.exists(path):
@@ -24,10 +21,9 @@ def get_public_key(device_id: str):
     with open(path, "rb") as fh:
         return load_pem_public_key(fh.read())
 
-
 # QR extraction helpers
 def extract_qr_matrix(px: np.ndarray, off_x: int, off_y: int) -> List[List[int]]:
-    """Reads the blue-channel LSBs inside one tile and returns a MODULES×MODULES matrix."""
+    """Return a MODULES×MODULES matrix of 0/1 bits (blue-channel LSB)."""
     return [
         [
             px[off_y + y * BLOCK_SIZE,
@@ -37,91 +33,83 @@ def extract_qr_matrix(px: np.ndarray, off_x: int, off_y: int) -> List[List[int]]
         for y in range(MODULES)
     ]
 
-
-def qr_matrix_to_cv(qr: List[List[int]]) -> np.ndarray:
-    """Convert the binary matrix to an OpenCV-compatible image (grayscale)."""
-    size = MODULES + 8
-    img  = np.full((size, size), 255, np.uint8)
+# bigger quiet zone + higher up-scale
+def qr_matrix_to_cv(qr: List[List[int]],
+                    quiet: int = 8,
+                    scale: int = 10) -> np.ndarray:
+    """
+    Renders the binary matrix to a uint8 OpenCV image:
+      • `quiet` white modules on every side
+      • `scale`× nearest-neighbour up-scaling for crisp edges
+    """
+    side = MODULES + 2 * quiet
+    img  = np.full((side, side), 255, np.uint8)          # white background
     for y in range(MODULES):
         for x in range(MODULES):
             if qr[y][x]:
-                img[y + 4, x + 4] = 0
-    return cv2.resize(img, (size * 4, size * 4), interpolation=cv2.INTER_NEAREST)
+                img[y + quiet, x + quiet] = 0
+    return cv2.resize(img,
+                      (side * scale, side * scale),
+                      interpolation=cv2.INTER_NEAREST)
 
-
+# try detectAndDecodeMulti as fallback
 def decode_qr(qr_mat: List[List[int]]) -> str:
-    """Decode QR matrix with OpenCV."""
+    """Decode the QR matrix using OpenCV. Raises ValueError on failure."""
+    qr_img = qr_matrix_to_cv(qr_mat)      # bigger, with wide quiet zone
     detector = cv2.QRCodeDetector()
-    data, _, _ = detector.detectAndDecode(qr_matrix_to_cv(qr_mat))
-    if not data:
-        raise ValueError("QR decode failed")
-    return data
 
+    txt, _, _ = detector.detectAndDecode(qr_img)
+    if txt:
+        return txt
 
-# Signature + hash verification
+    # Multi-code fallback (helps sometimes with non-standard sizes)
+    ok, texts, _ = detector.detectAndDecodeMulti(qr_img)
+    if ok and texts and texts[0]:
+        return texts[0]
+
+    raise ValueError("QR decode failed")
+
+# signature + hash verification
 def verify_tile(json_payload: dict,
                 tile_px: np.ndarray,
                 public_key) -> None:
-    """Raises on any verification failure."""
-    # 1) recompute pixel hash (upper 7 bits of RGB)
     masked = tile_px & 0xFE
-    calc_hash = hashlib.sha256(masked.tobytes()).hexdigest()
-    if calc_hash != json_payload["hash"]:
+    if hashlib.sha256(masked.tobytes()).hexdigest() != json_payload["hash"]:
         raise ValueError("pixel hash mismatch")
 
-    # 2) verify signature
     sig_hex = json_payload.pop("sig")
-    sig     = bytes.fromhex(sig_hex)
-
-    canonical = json.dumps(json_payload, sort_keys=True).encode()
     try:
-        public_key.verify(sig, canonical)
+        public_key.verify(bytes.fromhex(sig_hex),
+                          json.dumps(json_payload, sort_keys=True).encode())
     finally:
         json_payload["sig"] = sig_hex
 
-
-# Main entry point
+# main entry point
 def decode_all_qr_codes(image_path: str) -> List[Dict]:
-    """
-    Returns a list of verified tiles:
+    img  = Image.open(image_path).convert("RGB")
+    px   = np.array(img)
+    H, W = px.shape[:2]
+    cols = W // QR_PIX
+    rows = H // QR_PIX
 
-        {
-          "json":      <original JSON string>,
-          "device_id": <str>,
-          "tile_x":    <int>,
-          "tile_y":    <int>
-        }
-    """
-    img   = Image.open(image_path).convert("RGB")
-    px    = np.array(img)
-    H, W  = px.shape[:2]
-    cols  = W // QR_PIX
-    rows  = H // QR_PIX
-    output: List[Dict] = []
-
+    out: List[Dict] = []
     for ty in range(rows):
         for tx in range(cols):
             x0, y0 = tx * QR_PIX, ty * QR_PIX
             tile   = px[y0:y0 + QR_PIX, x0:x0 + QR_PIX]
-
             try:
-                qr_mat = extract_qr_matrix(px, x0, y0)
-                json_str = decode_qr(qr_mat)
-                payload  = json.loads(json_str)
+                qr   = extract_qr_matrix(px, x0, y0)
+                data = json.loads(decode_qr(qr))
 
-                device_id = payload["device_id"]
-                pubkey    = get_public_key(device_id)
+                pub  = get_public_key(data["device_id"])
+                verify_tile(data, tile, pub)
 
-                verify_tile(payload, tile, pubkey)
-
-                output.append({
-                    "json":      json_str,
-                    "device_id": device_id,
-                    "tile_x":    payload["tile_x"],
-                    "tile_y":    payload["tile_y"]
+                out.append({
+                    "json":      json.dumps(data),
+                    "device_id": data["device_id"],
+                    "tile_x":    data["tile_x"],
+                    "tile_y":    data["tile_y"]
                 })
-
             except Exception:
                 continue
-
-    return output
+    return out
