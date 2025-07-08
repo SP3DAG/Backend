@@ -4,21 +4,19 @@ from typing import List, Dict
 import numpy as np
 from PIL import Image
 import cv2
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
 
 
-# ─────────────────── Constants (match the Swift embedder) ───────────────────
+# Constants (match the Swift embedder)
 BLOCK_SIZE = 8
-MODULES    = 126                       # hard-coded after calibration
-QR_PIX     = BLOCK_SIZE * MODULES      # 1008 px
+MODULES    = 125
+QR_PIX     = BLOCK_SIZE * MODULES
 
 
 PUBLIC_KEY_FOLDER = "/var/data/public_keys"
 
 
-# ─────────────────── Public-key helper ───────────────────────────────────────
+# Public-key helper
 def get_public_key(device_id: str):
     path = os.path.join(PUBLIC_KEY_FOLDER, f"{device_id}.pem")
     if not os.path.exists(path):
@@ -27,7 +25,7 @@ def get_public_key(device_id: str):
         return load_pem_public_key(fh.read())
 
 
-# ─────────────────── QR extraction helpers ───────────────────────────────────
+# QR extraction helpers
 def extract_qr_matrix(px: np.ndarray, off_x: int, off_y: int) -> List[List[int]]:
     """Reads the blue-channel LSBs inside one tile and returns a MODULES×MODULES matrix."""
     return [
@@ -42,7 +40,7 @@ def extract_qr_matrix(px: np.ndarray, off_x: int, off_y: int) -> List[List[int]]
 
 def qr_matrix_to_cv(qr: List[List[int]]) -> np.ndarray:
     """Convert the binary matrix to an OpenCV-compatible image (grayscale)."""
-    size = MODULES + 8    # add quiet zone
+    size = MODULES + 8
     img  = np.full((size, size), 255, np.uint8)
     for y in range(MODULES):
         for x in range(MODULES):
@@ -60,7 +58,7 @@ def decode_qr(qr_mat: List[List[int]]) -> str:
     return data
 
 
-# ─────────────────── Signature + hash verification ───────────────────────────
+# Signature + hash verification
 def verify_tile(json_payload: dict,
                 tile_px: np.ndarray,
                 public_key) -> None:
@@ -72,18 +70,17 @@ def verify_tile(json_payload: dict,
         raise ValueError("pixel hash mismatch")
 
     # 2) verify signature
-    sig_hex = json_payload.pop("sig")      # remove before canonicalization
+    sig_hex = json_payload.pop("sig")
     sig     = bytes.fromhex(sig_hex)
 
     canonical = json.dumps(json_payload, sort_keys=True).encode()
     try:
         public_key.verify(sig, canonical)
     finally:
-        # put it back so caller still sees full payload
         json_payload["sig"] = sig_hex
 
 
-# ─────────────────── Main entry point ────────────────────────────────────────
+# Main entry point
 def decode_all_qr_codes(image_path: str) -> List[Dict]:
     """
     Returns a list of verified tiles:
@@ -125,7 +122,6 @@ def decode_all_qr_codes(image_path: str) -> List[Dict]:
                 })
 
             except Exception:
-                # skip invalid or tampered tiles
                 continue
 
     return output
