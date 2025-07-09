@@ -6,10 +6,6 @@ It enables cryptographic verification of geo-signed images captured by the GeoCa
 
 More information about the GeoCam app can be found under [GeoCam](https://sp3dag.github.io/geocam-webclient/).
 
-**Live Server**  
-The backend is hosted on Render and publicly accessible at:  
-https://backend-dzm1.onrender.com
-
 ---
 
 ## Project Purpose
@@ -91,7 +87,8 @@ Verifies the authenticity of a geo-signed image using the registered public key 
 **Response:**
 ```json
 {
-  "decoded_message": "<verified_payload>"
+  "decoded_message": "<verified_payload>",
+  "status": "verified" or "verified_but_image_modified"
 }
 ```
 
@@ -129,21 +126,62 @@ Downloads the full JSON registry of all submitted public keys.
 
 ## Running Locally
 
-To run the server locally:
+This backend is no longer hosted online and must be run locally.
+
+Start the server with:
 
 ```bash
 uvicorn main:app --host 0.0.0.0 --port 10000
 ```
 
-Set the `PERSIST_DIR` environment variable if needed.
+To allow access from another device (e.g. your phone), determine your local IP address:
+
+**macOS (Wi-Fi):**
+```bash
+ipconfig getifaddr en0
+```
+
+**Linux:**
+```bash
+ip a | grep inet
+```
+
+**Windows:**
+```bash
+ipconfig
+```
+
+Use that IP with port `10000` to access the backend, for example:
+
+```
+http://192.168.1.42:10000/verify-image/
+```
+
+Ensure both devices are on the same network.
 
 ---
 
 ## Dependencies
 
-Install the required packages with:
+Install required Python packages:
 
 ```bash
 pip install -r requirements.txt
 ```
+
+Also install the `zbar` QR decoding library:
+
+**macOS:**
+```bash
+brew install zbar
+```
+
+**Debian/Ubuntu:**
+```bash
+sudo apt install libzbar0
+```
+
+**Windows:**
+Install the ZBar binaries from the [official repository](https://github.com/mchehab/zbar).
+
 ---
