@@ -1,4 +1,5 @@
-import os, json, secrets
+import os, json, secrets, uvicorn
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
@@ -10,9 +11,13 @@ from cryptography.hazmat.primitives.serialization import load_pem_public_key
 from decoding.decoding import decode_all_qr_codes
 
 # Persistent Storage
-PERSIST_DIR = os.getenv("PERSIST_DIR", "/var/data")
-KEYS_DIR    = os.path.join(PERSIST_DIR, "public_keys")
-os.makedirs(KEYS_DIR, exist_ok=True)
+PERSIST_DIR = Path(os.getenv("PERSIST_DIR", ".")) / "data"
+KEYS_DIR    = PERSIST_DIR / "public_keys"
+KEYS_DIR.mkdir(parents=True, exist_ok=True)
+
+#PERSIST_DIR = os.getenv("PERSIST_DIR", "/var/data")
+#KEYS_DIR    = os.path.join(PERSIST_DIR, "public_keys")
+#os.makedirs(KEYS_DIR, exist_ok=True)
 
 # In-memory token & key tracking
 tokens, public_keys = {}, {}
@@ -92,42 +97,39 @@ async def verify_image(file: UploadFile = File(...)):
         with open(tmp_path, "wb") as fh:
             fh.write(await file.read())
 
-        # NEW: build device-id → public-key dict for the verifier
-        key_dict = {did: load_pem_public_key(pem.encode())
-                    for did, pem in public_keys.items()}
+        key_dict = {did: load_pem_public_key(pem.encode()) for did, pem in public_keys.items()}
 
-        tiles = decode_all_qr_codes(tmp_path, key_dict)   # pass keys
-
+        tiles = decode_all_qr_codes(tmp_path, key_dict)
         if not tiles:
-            raise HTTPException(status_code=422,
-                                detail="No valid signed QR tiles found.")
+            raise HTTPException(status_code=422, detail="No valid signed QR tiles found.")
+
         dev_ids = {t["device_id"] for t in tiles}
         if len(dev_ids) != 1:
-            raise HTTPException(status_code=422,
-                                detail="Mixed device IDs in image.")
-        device_id = dev_ids.pop()
+            raise HTTPException(status_code=422, detail="Mixed device IDs in image.")
 
-        xs = {t["tile_x"] for t in tiles}
-        ys = {t["tile_y"] for t in tiles}
-        full_grid = (xs == set(range(max(xs)+1)) and
-                     ys == set(range(max(ys)+1)))
+        total = tiles[0]["json"].get("tile_count")
+        if total is None:
+            raise HTTPException(status_code=422, detail="tile_count missing in QR payload")
 
-        status = "verified" if full_grid else "verified_but_image_modified"
+        present = {t["json"]["tile_id"] for t in tiles}
+        missing = set(range(total)) - present
+        status = "verified" if not missing else "verified_but_image_modified"
 
-        return JSONResponse({
-            "status":         status,
-            "device_id":      device_id,
-            "tiles_verified": len(tiles),
-            "grid_cols":      max(xs)+1,
-            "grid_rows":      max(ys)+1
-        })
+        decoded_message = tiles[0]["json"]["message"]
+        if isinstance(decoded_message, (bytes, bytearray)):
+            decoded_message = decoded_message.decode("utf-8", "replace")
+
+        response = {"decoded_message": decoded_message, "status": status}
+        if missing:
+            response["missing_tile_ids"] = sorted(list(missing))
+
+        return JSONResponse(response)
 
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500,
-                            detail=f"Image processing failed: {exc}")
-
+        raise HTTPException(status_code=500, detail=f"Image processing failed: {exc}")
+    
 # Public-key registry download
 @app.get("/api/public-keys", response_class=FileResponse)
 async def download_public_keys():
@@ -137,6 +139,5 @@ async def download_public_keys():
     return FileResponse(jpath, media_type="application/json",
                         filename="public_keys.json")
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=10000)
+#if __name__ == "__main__":
+#    uvicorn.run("main:app", host="0.0.0.0", port=10000)

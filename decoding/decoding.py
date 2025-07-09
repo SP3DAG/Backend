@@ -1,5 +1,5 @@
 import os, json, hashlib
-from typing import List, Dict
+from typing import List, Dict, Any
 import numpy as np
 from PIL import Image
 import cv2
@@ -58,24 +58,29 @@ def verify_tile(payload: dict, tile_px: np.ndarray, pubkey, verbose=True) -> Non
     finally:
         payload["sig"] = sig_hex
 
-def decode_all_qr_codes(image_path: str, public_keys: Dict[str, any]) -> List[Dict]:
+def decode_all_qr_codes(image_path: str,
+                        public_keys: Dict[str, Any]) -> List[Dict]:
     px = np.array(Image.open(image_path).convert("RGB"))
     H, W = px.shape[:2]
     cols, rows = W // QR_PIX, H // QR_PIX
+
     verified = []
     for ty in range(rows):
         for tx in range(cols):
             x0, y0 = tx * QR_PIX, ty * QR_PIX
-            tile = px[y0:y0 + QR_PIX, x0:x0 + QR_PIX]
+            tile   = px[y0:y0 + QR_PIX, x0:x0 + QR_PIX]
             try:
                 payload = decode_qr(extract_qr_matrix(px, x0, y0))
-                pubkey = public_keys[payload["device_id"]]
+                pubkey  = public_keys[payload["device_id"]]
                 verify_tile(payload, tile, pubkey, verbose=False)
+
+                verified.append({
+                    "device_id": payload["device_id"],
+                    "tile_id":   payload["tile_id"],
+                    "json":      payload.copy()
+                })
                 print(f"verified tile: {tx} {ty}")
-                verified.append({"device_id": payload["device_id"],
-                                 "tile_x": payload["tile_x"],
-                                 "tile_y": payload["tile_y"],
-                                 "json":   payload})
-            except Exception as e:
-                print(f"skipped tile: {tx} {ty} – {type(e).__name__}: {e}")
+            except Exception as exc:
+                print(f"skipped tile: {tx} {ty} – {type(exc).__name__}: {exc}")
+
     return verified
