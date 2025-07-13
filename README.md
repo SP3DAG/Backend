@@ -176,6 +176,14 @@ Also install the `zbar` QR decoding library:
 brew install zbar
 ```
 
+```
+# Apple Silicon
+export DYLD_LIBRARY_PATH=/opt/homebrew/lib:$DYLD_LIBRARY_PATH
+
+# Intel
+export DYLD_LIBRARY_PATH=/usr/local/lib:$DYLD_LIBRARY_PATH
+```
+
 **Debian/Ubuntu:**
 ```bash
 sudo apt install libzbar0
