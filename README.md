@@ -163,6 +163,12 @@ Ensure both devices are on the same network.
 
 ## Dependencies
 
+Create venv:
+
+```bash
+python -m venv venv
+```
+
 Install required Python packages:
 
 ```bash
