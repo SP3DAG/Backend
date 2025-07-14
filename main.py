@@ -106,6 +106,10 @@ async def verify_image(file: UploadFile = File(...)):
         dev_ids = {t["device_id"] for t in tiles}
         if len(dev_ids) != 1:
             raise HTTPException(status_code=422, detail="Mixed device IDs in image.")
+        
+        messages = {t["json"]["message"] for t in tiles}
+        if len(messages) != 1:
+            raise HTTPException(status_code=422, detail="Inconsistent message content across tiles.")
 
         total = tiles[0]["json"].get("tile_count")
         if total is None:
