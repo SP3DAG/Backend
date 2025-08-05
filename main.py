@@ -99,14 +99,18 @@ async def verify_image(file: UploadFile = File(...)):
 
         key_dict = {did: load_pem_public_key(pem.encode()) for did, pem in public_keys.items()}
 
-        tiles = decode_all_qr_codes(tmp_path, key_dict)
+        try:
+            tiles = decode_all_qr_codes(tmp_path, key_dict)
+        except ValueError as ve:
+            raise HTTPException(status_code=422, detail=str(ve))
+
         if not tiles:
             raise HTTPException(status_code=422, detail="No valid signed QR tiles found.")
 
         dev_ids = {t["device_id"] for t in tiles}
         if len(dev_ids) != 1:
             raise HTTPException(status_code=422, detail="Mixed device IDs in image.")
-        
+
         messages = {t["json"]["message"] for t in tiles}
         if len(messages) != 1:
             raise HTTPException(status_code=422, detail="Inconsistent message content across tiles.")
@@ -115,19 +119,17 @@ async def verify_image(file: UploadFile = File(...)):
         if total is None:
             raise HTTPException(status_code=422, detail="tile_count missing in QR payload")
 
-        present = {t["json"]["tile_id"] for t in tiles}
-        missing = set(range(total)) - present
-        status = "verified" if not missing else "verified_but_image_modified"
+        if len(tiles) != total:
+            raise HTTPException(status_code=422, detail="Incomplete tile set or tampered image.")
 
         decoded_message = tiles[0]["json"]["message"]
         if isinstance(decoded_message, (bytes, bytearray)):
             decoded_message = decoded_message.decode("utf-8", "replace")
 
-        response = {"decoded_message": decoded_message, "status": status}
-        if missing:
-            response["missing_tile_ids"] = sorted(list(missing))
-
-        return JSONResponse(response)
+        return JSONResponse({
+            "decoded_message": decoded_message,
+            "status": "verified"
+        })
 
     except HTTPException:
         raise

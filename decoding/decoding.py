@@ -40,9 +40,7 @@ def decode_qr(qr_mat: List[List[int]]) -> dict:
         raise ValueError("QReader failed to decode QR")
     return json.loads(decoded[0])
 
-def verify_tile(payload: dict, tile_px: np.ndarray, pubkey, verbose=True) -> None:
-    if hashlib.sha256((tile_px & 0xFE).tobytes()).hexdigest() != payload["hash"]:
-        raise ValueError("pixel hash mismatch")
+def verify_signature_only(payload: dict, pubkey, verbose=True) -> None:
     sig_hex = payload.pop("sig")
     try:
         sig = bytes.fromhex(sig_hex)
@@ -58,6 +56,10 @@ def verify_tile(payload: dict, tile_px: np.ndarray, pubkey, verbose=True) -> Non
     finally:
         payload["sig"] = sig_hex
 
+def hash_top_7_bits(px: np.ndarray) -> str:
+    masked = px & 0xFE
+    return hashlib.sha256(masked.tobytes()).hexdigest()
+
 def decode_all_qr_codes(image_path: str,
                         public_keys: Dict[str, Any]) -> List[Dict]:
     px = np.array(Image.open(image_path).convert("RGB"))
@@ -65,6 +67,8 @@ def decode_all_qr_codes(image_path: str,
     cols, rows = W // QR_PIX, H // QR_PIX
 
     verified = []
+    image_hash_from_qr = None
+
     for ty in range(rows):
         for tx in range(cols):
             x0, y0 = tx * QR_PIX, ty * QR_PIX
@@ -72,7 +76,12 @@ def decode_all_qr_codes(image_path: str,
             try:
                 payload = decode_qr(extract_qr_matrix(px, x0, y0))
                 pubkey  = public_keys[payload["device_id"]]
-                verify_tile(payload, tile, pubkey, verbose=False)
+                verify_signature_only(payload, pubkey, verbose=False)
+
+                if image_hash_from_qr is None:
+                    image_hash_from_qr = payload["image_hash"]
+                elif payload["image_hash"] != image_hash_from_qr:
+                    raise ValueError("Mismatched image_hash in tile")
 
                 verified.append({
                     "device_id": payload["device_id"],
@@ -82,5 +91,12 @@ def decode_all_qr_codes(image_path: str,
                 print(f"verified tile: {tx} {ty}")
             except Exception as exc:
                 print(f"skipped tile: {tx} {ty} – {type(exc).__name__}: {exc}")
+
+    if not verified:
+        raise ValueError("No valid tiles found")
+
+    recomputed_hash = hash_top_7_bits(px)
+    if recomputed_hash != image_hash_from_qr:
+        raise ValueError("Global image hash mismatch")
 
     return verified
