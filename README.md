@@ -65,7 +65,7 @@ Completes device registration by submitting a public key tied to a token.
 
 **Form Fields:**
 - `token`: The linking token received earlier
-- `public_key`: PEM-formatted public RSA key
+- `public_key`: PEM-formatted public elliptic curve key
 
 **Response:**
 ```json
